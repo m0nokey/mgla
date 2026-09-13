@@ -82,8 +82,8 @@ continuously testable and to reduce supply-chain and remote-code-execution
 (RCE) exposure:
 
 - keep final images minimal and run services as non-root users;
-- pin Alpine security fixes, source revisions, and downloaded archive checksums;
-- build the Monero wallet from source and verify its static linkage;
+- pin Alpine security fixes and the Monero source revision;
+- build only the Monero CLI wallet and verify its architecture and runtime linkage;
 - prevent the wallet from reaching the Internet outside the Tor path;
 - build both supported architectures and scan every final image in CI.
 
@@ -95,17 +95,17 @@ an explicit dependency update.
 ## Build and verification
 
 The Monero wallet is built from the pinned `v0.18.5.1` source commit in an
-Alpine builder. Its own `contrib/depends` toolchain builds the pinned static
-third-party dependencies, including Boost with ICU disabled, so host Alpine
-libraries cannot be selected accidentally. The final wallet binary is checked
-for static linkage before it enters the runtime image. The builder stage is
-discarded. Ledger/Trezor support is intentionally disabled in this minimal
-first version and can be added as a separate module option.
+Alpine builder, following the dependency model maintained by Alpine's official
+`community/monero` APKBUILD. Only CMake's `simplewallet` target is requested;
+the daemon, RPC server, GUI, tests, and debug utilities are not built. The
+binary architecture and all runtime links are checked before the disposable
+builder stage is discarded. Trezor support is intentionally disabled in this
+minimal first version and can be added as a separate module option.
 
-GitHub Actions builds both `linux/amd64` and `linux/arm64`, runs the Tor and
-network integration checks, and scans all three final images for fixed critical
-and high vulnerabilities. The workflow validates only; it does not publish
-images or require registry credentials.
+GitHub Actions builds `linux/amd64` and `linux/arm64` on native runners, runs
+the Tor and network integration checks, and scans all three final images for
+fixed critical and high vulnerabilities. The workflow validates only; it does
+not publish images or require registry credentials.
 
 Ordinary runs use Docker's layer cache and refresh the Alpine base manifest with
 `--pull`. Use `NO_CACHE=1` only when deliberately forcing a clean local rebuild.
