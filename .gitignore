@@ -1,0 +1,2 @@
+# Local wallet state; never commit private keys.
+**/wallets/
