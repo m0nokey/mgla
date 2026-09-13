@@ -56,6 +56,7 @@ RUN --mount=type=cache,target=/src/monero/contrib/depends/sources \
     set -eux; \
     target="$(gcc -dumpmachine)"; \
     make -C contrib/depends -j"$(nproc)" \
+        GITIAN=1 \
         HOST="${target}" \
         default_host_CC=gcc \
         default_host_CXX=g++ \
