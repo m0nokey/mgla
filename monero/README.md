@@ -95,10 +95,12 @@ an explicit dependency update.
 ## Build and verification
 
 The Monero wallet is built from the pinned `v0.18.5.1` source commit in an
-Alpine builder. Unbound is built from a pinned source archive, and the final
-wallet binary is checked for static linkage before it enters the runtime image.
-The builder stage is discarded. Ledger/Trezor support is intentionally disabled
-in this minimal first version and can be added as a separate module option.
+Alpine builder. Its own `contrib/depends` toolchain builds the pinned static
+third-party dependencies, including Boost with ICU disabled, so host Alpine
+libraries cannot be selected accidentally. The final wallet binary is checked
+for static linkage before it enters the runtime image. The builder stage is
+discarded. Ledger/Trezor support is intentionally disabled in this minimal
+first version and can be added as a separate module option.
 
 GitHub Actions builds both `linux/amd64` and `linux/arm64`, runs the Tor and
 network integration checks, and scans all three final images for fixed critical

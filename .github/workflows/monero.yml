@@ -35,8 +35,6 @@ jobs:
             platform: linux/amd64
           - architecture: arm64
             platform: linux/arm64
-    env:
-      DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
 
     steps:
       - name: Check out source
@@ -52,13 +50,14 @@ jobs:
 
       - name: Build and run integration checks
         run: |
-          CI=1 bash monero-cli.sh
+          CI=1 DOCKER_DEFAULT_PLATFORM="${{ matrix.platform }}" bash monero-cli.sh
 
       - name: Scan exit image
         uses: docker/scout-action@c94507b5bf72bd25244caafe9d4dab09fa2d687b # v1.18.0
         with:
           command: cves
           image: local://mgla-exit
+          platform: ${{ matrix.platform }}
           only-severities: critical,high
           only-fixed: true
           exit-code: true
@@ -68,6 +67,7 @@ jobs:
         with:
           command: cves
           image: local://mgla-haproxy
+          platform: ${{ matrix.platform }}
           only-severities: critical,high
           only-fixed: true
           exit-code: true
@@ -77,6 +77,7 @@ jobs:
         with:
           command: cves
           image: local://mgla-monero
+          platform: ${{ matrix.platform }}
           only-severities: critical,high
           only-fixed: true
           exit-code: true
