@@ -104,6 +104,7 @@ RUN apk add --no-cache \
         bash \
         boost-chrono \
         boost-filesystem \
+        boost-locale \
         boost-program_options \
         boost-serialization \
         boost-thread \
