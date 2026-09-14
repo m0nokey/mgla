@@ -27,7 +27,29 @@ restore_tty() {
 
 cleanup() { restore_tty; }
 
+stop_wallet_child() {
+    local pid="${wallet_pid:-}"
+    local i
+
+    [[ -n "${pid}" ]] || return 0
+
+    kill -INT "${pid}" 2>/dev/null || true
+    for i in 1 2 3 4 5; do
+        kill -0 "${pid}" 2>/dev/null || return 0
+        sleep 0.1
+    done
+
+    kill -TERM "${pid}" 2>/dev/null || true
+    for i in 1 2 3 4 5; do
+        kill -0 "${pid}" 2>/dev/null || return 0
+        sleep 0.1
+    done
+
+    kill -KILL "${pid}" 2>/dev/null || true
+}
+
 on_sigint() {
+    stop_wallet_child
     clear_screen
     restore_tty
     echo
@@ -36,6 +58,7 @@ on_sigint() {
 }
 
 on_sigterm() {
+    stop_wallet_child
     restore_tty
     echo
     echo "Received SIGTERM. Exiting..."
@@ -46,6 +69,7 @@ trap on_sigint INT
 trap on_sigterm TERM
 trap 'cleanup' EXIT
 
+wallet_pid=""
 socks_port="${socks_port:-9095}"
 wallet_root="${wallet_root:-/monero/wallets}"
 wallet_host_root="${WALLET_HOST_DIR:-${wallet_root}}"
@@ -283,32 +307,44 @@ _month_name() {
     esac
 }
 
-# Run monero-wallet-cli for CREATE/RESTORE with real TTY stdio (no logs)
-run_wallet_cli_tty() {
+run_wallet_process() {
     local rc
+    local -a wallet_command=(
+        monero-wallet-cli
+        --proxy "${proxy}"
+        --daemon-host "${daemon_host}"
+        --daemon-port "${daemon_port}"
+        "${daemon_flag}"
+        --log-file /dev/null
+        --log-level 0
+        "$@"
+    )
+
     set +e
     if tty_ok; then
-        monero-wallet-cli \
-            --proxy "${proxy}" \
-            --daemon-host "${daemon_host}" \
-            --daemon-port "${daemon_port}" \
-            ${daemon_flag} \
-            --log-file /dev/null \
-            --log-level 0 \
-            "$@" </dev/tty >/dev/tty 2>/dev/tty
+        "${wallet_command[@]}" </dev/tty >/dev/tty 2>/dev/tty &
     else
-        monero-wallet-cli \
-            --proxy "${proxy}" \
-            --daemon-host "${daemon_host}" \
-            --daemon-port "${daemon_port}" \
-            ${daemon_flag} \
-            --log-file /dev/null \
-            --log-level 0 \
-            "$@" >/dev/null 2>&1
+        "${wallet_command[@]}" >/dev/null 2>&1 &
     fi
+    wallet_pid=$!
+
+    wait "${wallet_pid}"
     rc=$?
+    wallet_pid=""
     set -e
+
+    if [[ "${rc}" -eq 130 ]]; then
+        on_sigint
+    elif [[ "${rc}" -eq 143 ]]; then
+        on_sigterm
+    fi
+
     return "$rc"
+}
+
+# Run monero-wallet-cli for CREATE/RESTORE with real TTY stdio (no logs)
+run_wallet_cli_tty() {
+    run_wallet_process "$@"
 }
 
 # Screen A — Restore height (ONLY place with explanation)
@@ -765,27 +801,7 @@ run_selected_wallet() {
         tty_blank
 
         set +e
-        if tty_ok; then
-            monero-wallet-cli \
-                --proxy "${proxy}" \
-                --daemon-host "${daemon_host}" \
-                --daemon-port "${daemon_port}" \
-                ${daemon_flag} \
-                --wallet-file "${wallet_file}" \
-                --log-file /dev/null \
-                --log-level 0 \
-                "$@" </dev/tty >/dev/tty 2>/dev/tty
-        else
-            monero-wallet-cli \
-                --proxy "${proxy}" \
-                --daemon-host "${daemon_host}" \
-                --daemon-port "${daemon_port}" \
-                ${daemon_flag} \
-                --wallet-file "${wallet_file}" \
-                --log-file /dev/null \
-                --log-level 0 \
-                "$@" >/dev/null 2>&1
-        fi
+        run_wallet_process --wallet-file "${wallet_file}" "$@"
         rc=$?
         set -e
 
