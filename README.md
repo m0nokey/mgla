@@ -69,15 +69,15 @@ The wallet is at the bottom and has no direct Internet route:
                                       │ Tor network
                          ┌────────────┴────────────┐
                          │                         │
-                  mgla-exit-a                 mgla-exit-b
+                     exit-a                      exit-b
                          ▲                         ▲
                          └────────────┬────────────┘
                                       │
-                    mgla-haproxy (Tor SOCKS relay)
+                       haproxy (Tor SOCKS relay)
                                       ▲
                                       │ internal_network only
                                       │
-                                mgla-monero
+                                monero-cli
 ```
 
 `mgla-monero` is attached only to Docker's internal network and has no direct

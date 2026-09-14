@@ -74,15 +74,15 @@ bypass the internal SOCKS broker:
                                       │ Tor network
                          ┌────────────┴────────────┐
                          │                         │
-                  mgla-exit-a                 mgla-exit-b
+                     exit-a                      exit-b
                          ▲                         ▲
                          └────────────┬────────────┘
                                       │
-                    mgla-haproxy (Tor SOCKS relay)
+                       haproxy (Tor SOCKS relay)
                                       ▲
                                       │ internal_network only
                                       │
-                                mgla-monero
+                                monero-cli
 ```
 
 `mgla-monero` is attached only to Docker's `internal_network`. It has no direct
