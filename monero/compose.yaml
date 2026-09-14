@@ -1,7 +1,7 @@
 services:
   exit_a:
     container_name: ${exit_a_container}
-    image: ${project}-exit
+    image: ${exit_image:-mgla-exit:latest}
     build:
       context: ./docker/exit
       dockerfile: Dockerfile
@@ -35,7 +35,7 @@ services:
 
   exit_b:
     container_name: ${exit_b_container}
-    image: ${project}-exit
+    image: ${exit_image:-mgla-exit:latest}
     init: true
     stop_signal: SIGTERM
     stop_grace_period: 5s
@@ -66,7 +66,7 @@ services:
 
   haproxy:
     container_name: ${haproxy_container}
-    image: ${project}-haproxy
+    image: ${haproxy_image:-mgla-haproxy:latest}
     build:
       context: ./docker/haproxy
       dockerfile: Dockerfile
@@ -98,7 +98,7 @@ services:
 
   monero:
     container_name: ${monero_container}
-    image: ${project}-monero
+    image: ${monero_image:-mgla-monero:latest}
     build:
       context: ./docker/monero
       dockerfile: Dockerfile

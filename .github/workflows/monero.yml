@@ -16,17 +16,21 @@ on:
 permissions:
   contents: read
 
-# The workflow validates local images only. Publishing will be a separate,
-# explicitly authorized release workflow.
+# Pull requests and non-main pushes validate local images only. Successful
+# pushes to main publish multi-architecture images to GHCR.
 env:
   MONERO_VERSION: v0.18.5.1
   MONERO_COMMIT: 4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5
+  IMAGE_REGISTRY: ghcr.io/m0nokey
 
 jobs:
   build-test-scan:
     name: ${{ matrix.architecture }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -43,9 +47,12 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: Set up BuildKit
-        uses: docker/setup-buildx-action@18ce135bb5112fa8ce4ed6c17ab05699d7f3a5e0 # v3.11.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Build and run integration checks
+        env:
+          IMAGE_MODE: build
+          IMAGE_TAG: ${{ github.sha }}-${{ matrix.architecture }}
         run: |
           CI=1 DOCKER_DEFAULT_PLATFORM="${{ matrix.platform }}" bash monero-cli.sh
 
@@ -53,7 +60,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: mgla-exit
+          image-ref: ghcr.io/m0nokey/mgla-exit:${{ github.sha }}-${{ matrix.architecture }}
           format: table
           exit-code: "1"
           ignore-unfixed: true
@@ -65,7 +72,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: mgla-haproxy
+          image-ref: ghcr.io/m0nokey/mgla-haproxy:${{ github.sha }}-${{ matrix.architecture }}
           format: table
           exit-code: "1"
           ignore-unfixed: true
@@ -77,10 +84,69 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: mgla-monero
+          image-ref: ghcr.io/m0nokey/mgla-monero:${{ github.sha }}-${{ matrix.architecture }}
           format: table
           exit-code: "1"
           ignore-unfixed: true
           vuln-type: os,library
           scanners: vuln
           severity: CRITICAL,HIGH
+
+      - name: Log in to GHCR
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: m0nokey
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push architecture images
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          IMAGE_TAG: ${{ github.sha }}-${{ matrix.architecture }}
+        run: |
+          set -eux
+          docker push "${IMAGE_REGISTRY}/mgla-exit:${IMAGE_TAG}"
+          docker push "${IMAGE_REGISTRY}/mgla-haproxy:${IMAGE_TAG}"
+          docker push "${IMAGE_REGISTRY}/mgla-monero:${IMAGE_TAG}"
+
+  publish:
+    name: publish multi-architecture manifests
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: build-test-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Set up BuildKit
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: m0nokey
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish multi-architecture manifests
+        env:
+          IMAGE_REGISTRY: ghcr.io/m0nokey
+          SOURCE_TAG: ${{ github.sha }}
+          RELEASE_TAG: ${{ env.MONERO_VERSION }}
+        run: |
+          set -eux
+          for image in exit haproxy monero; do
+            tags=(
+              --tag "${IMAGE_REGISTRY}/mgla-${image}:latest"
+              --tag "${IMAGE_REGISTRY}/mgla-${image}:${RELEASE_TAG}"
+              --tag "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}"
+            )
+            sources=(
+              "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-amd64"
+              "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-arm64"
+            )
+            docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+          done

@@ -8,6 +8,34 @@ project="mgla"
 workdir="$(mktemp -d -t "${project}.XXXXXXXX")"
 wallet_host_dir="${WALLET_HOST_DIR:-${HOME}/Downloads/Monero/wallets}"
 
+image_mode="${IMAGE_MODE-pull}"
+image_registry="${IMAGE_REGISTRY-ghcr.io/m0nokey}"
+image_tag="${IMAGE_TAG-latest}"
+
+case "${image_mode}" in
+    pull|build) ;;
+    *)
+        echo "[error] IMAGE_MODE must be either pull or build" >&2
+        exit 1
+        ;;
+esac
+if [[ -n "${image_registry}" && ! "${image_registry}" =~ ^[[:alnum:]][[:alnum:]./_-]*$ ]]; then
+    echo "[error] invalid IMAGE_REGISTRY: ${image_registry}" >&2
+    exit 1
+fi
+if [[ ! "${image_tag}" =~ ^[[:alnum:]_][[:alnum:]._-]{0,127}$ ]]; then
+    echo "[error] invalid IMAGE_TAG: ${image_tag}" >&2
+    exit 1
+fi
+image_registry="${image_registry%/}"
+image_prefix="${project}"
+if [[ -n "${image_registry}" ]]; then
+    image_prefix="${image_registry}/${project}"
+fi
+exit_image="${image_prefix}-exit:${image_tag}"
+haproxy_image="${image_prefix}-haproxy:${image_tag}"
+monero_image="${image_prefix}-monero:${image_tag}"
+
 wipe_host() {
     [[ -t 1 ]] || return 0
     clear 2>/dev/null || true
@@ -251,8 +279,11 @@ gen_docker_networks 29
 echo "[info] external network: ${ext_network_container_subnet_cidr_ipv4}"
 echo "[info] internal network: ${int_network_container_subnet_cidr_ipv4}"
 echo "[info] Monero release: ${monero_version}"
+echo "[info] image mode: ${image_mode}"
+echo "[info] image tag: ${image_tag}"
 
 export project wallet_host_dir monero_version monero_commit
+export exit_image haproxy_image monero_image
 export exit_a_container exit_b_container haproxy_container monero_container
 export ext_network_container_subnet_cidr_ipv4 ext_network_container_gateway_ipv4
 export ext_network_container_exit_a_ipv4 ext_network_container_exit_b_ipv4
@@ -265,15 +296,20 @@ echo "[info] preclean old test stack"
 cleanup_project
 start_guard
 install -d -m 700 "${wallet_host_dir}"
-echo "[info] building Alpine images and source-built Monero image"
-if [[ "${NO_CACHE:-0}" == "1" ]]; then
-    compose build --pull --no-cache
+if [[ "${image_mode}" == "pull" ]]; then
+    echo "[info] pulling published multi-architecture images"
+    compose pull
 else
-    compose build --pull
+    echo "[info] building Alpine images and source-built Monero image"
+    if [[ "${NO_CACHE:-0}" == "1" ]]; then
+        compose build --pull --no-cache
+    else
+        compose build --pull
+    fi
 fi
 
 echo "[info] starting containers"
-compose up -d --force-recreate
+compose up -d --force-recreate --no-build
 
 wipe_host
 print_message_about_nyx

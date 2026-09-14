@@ -17,11 +17,34 @@ the final `mgla-monero` container itself.
 
 ## Run locally
 
-From the repository root:
+From the repository root, pull the published multi-architecture images and start the stack:
 
 ```bash
 bash monero-cli.sh
 ```
+
+The default mode pulls these images from GHCR:
+
+```text
+ghcr.io/m0nokey/mgla-exit:latest
+ghcr.io/m0nokey/mgla-haproxy:latest
+ghcr.io/m0nokey/mgla-monero:latest
+```
+
+For a local source build instead of pulling, run:
+
+```bash
+IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash monero-cli.sh
+```
+
+For a versioned published image, set its tag explicitly:
+
+```bash
+IMAGE_TAG=v0.18.5.1 bash monero-cli.sh
+```
+
+GHCR packages must be public for unauthenticated pulls. Otherwise authenticate first with
+`docker login ghcr.io`.
 
 The compatibility wrapper at the repository root (`monero-cli.sh`) delegates to this module, so
 running `bash monero-cli.sh` from the repository root also works.
@@ -104,8 +127,12 @@ minimal first version and can be added as a separate module option.
 
 GitHub Actions builds `linux/amd64` and `linux/arm64` on native runners, runs
 the Tor and network integration checks, and scans all three final images for
-fixed critical and high vulnerabilities. The workflow validates only; it does
-not publish images or require registry credentials.
+fixed critical and high vulnerabilities. Pull requests and non-main branches
+only validate; successful pushes to `main` publish architecture-specific images
+and multi-architecture manifests to GHCR with `latest`, the Monero release tag,
+and the source commit tag.
 
-Ordinary runs use Docker's layer cache and refresh the Alpine base manifest with
-`--pull`. Use `NO_CACHE=1` only when deliberately forcing a clean local rebuild.
+Pull mode does not compile locally. Use `IMAGE_MODE=build` for a local source
+build; the build mode uses Docker's layer cache and refreshes the Alpine base
+manifest with `--pull`. Set `NO_CACHE=1` only when deliberately forcing a clean
+local rebuild.

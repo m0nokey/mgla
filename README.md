@@ -13,6 +13,7 @@ Planned module:
 - `bitcoin/` — Bitcoin CLI wallet using the same reusable Tor transport.
 
 The project is designed for reproducible builds, least-privilege containers,
-pinned source revisions, dynamic Docker subnets, and CI vulnerability checks.
+pinned source revisions, dynamic Docker subnets, CI vulnerability checks, and
+optional multi-architecture image publication to GHCR after successful scans.
 Wallet keys and host wallet directories are never copied into images or the
 repository.
