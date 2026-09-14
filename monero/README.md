@@ -40,8 +40,7 @@ IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash run.sh
 GHCR packages must be public for unauthenticated pulls. Otherwise authenticate first with
 `docker login ghcr.io`.
 
-The root `monero-cli.sh` is retained as a compatibility wrapper. Direct module
-invocation is also available:
+For CI, debugging, or direct module invocation:
 
 ```bash
 bash monero/monero-cli.sh

@@ -1,36 +1,28 @@
 # mgla
 
 `mgla` is a privacy-oriented container workspace for cryptocurrency CLI
-wallets. Each wallet is an independent module with a shared onion-only
-transport layer.
+wallets. Wallet modules use an isolated Tor transport instead of receiving a
+direct Internet route.
 
-Current module:
+Available now:
 
-- `monero/` — Monero CLI wallet, Tor exits, HAProxy SOCKS5h, named host wallets.
+- `monero/` — Monero CLI wallet with two Tor exits and HAProxy failover.
 
-Planned module:
+Planned:
 
-- `bitcoin/` — Bitcoin CLI wallet using the same reusable Tor transport.
+- `bitcoin/` — Bitcoin CLI wallet using the same transport model.
 
 ## Quick Start
 
-For normal use, download the latest stable release from the GitHub Releases page.
-Release archives include a SHA-256 checksum and are the recommended way to run
-`mgla`.
+Requirements:
 
-```bash
-curl -fsSL --proto '=https' -O "https://github.com/m0nokey/mgla/releases/latest/download/mgla-latest.tar.gz" \
-&& curl -fsSL --proto '=https' -O "https://github.com/m0nokey/mgla/releases/latest/download/SHA256SUMS" \
-&& grep -F "mgla-latest.tar.gz" SHA256SUMS | sha256sum -c - \
-&& tar -xzf mgla-latest.tar.gz \
-&& cd "$(tar -tzf mgla-latest.tar.gz | sed -n '1s#/.*##p')" \
-&& bash run.sh
-```
+- Docker Engine or Docker Desktop;
+- Docker Compose v2;
+- Bash.
 
-The `releases/latest` link always points to the newest stable release. The
-README does not need to be changed for every patch release.
+Stable release archives are not published yet. Use the current `main` branch.
 
-For development and testing, use the `main` branch instead:
+With Git:
 
 ```bash
 git clone https://github.com/m0nokey/mgla.git
@@ -41,19 +33,101 @@ bash run.sh
 Without Git:
 
 ```bash
-curl -fsSL https://github.com/m0nokey/mgla/archive/refs/heads/main.tar.gz | tar -xz
+curl -fsSL --proto '=https' \
+  https://github.com/m0nokey/mgla/archive/refs/heads/main.tar.gz | tar -xz
 mv mgla-main mgla
 cd mgla
 bash run.sh
 ```
 
-The main menu is owned by `run.sh`; it selects a wallet scenario such as Monero.
-The root `monero-cli.sh` remains only as a compatibility wrapper for the Monero
-module. The normal Monero flow pulls the latest multi-architecture images from
-GHCR. Use `IMAGE_MODE=build` when a local source build is required.
+`run.sh` opens the project menu:
 
-The project is designed for reproducible builds, least-privilege containers,
-pinned source revisions, dynamic Docker subnets, CI vulnerability checks, and
-optional multi-architecture image publication to GHCR after successful scans.
-Wallet keys and host wallet directories are never copied into images or the
-repository.
+```text
+mgla
+------------------------------------------------------------
+1. Monero wallet
+q. Exit
+------------------------------------------------------------
+```
+
+Select `1` to start the Monero scenario. By default it pulls the latest
+multi-architecture images from GHCR. If the packages are private, authenticate
+first with `docker login ghcr.io`.
+
+To build all images locally instead:
+
+```bash
+IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash run.sh
+```
+
+## Network Model
+
+The wallet is at the bottom and has no direct Internet route:
+
+```text
+                         Monero onion daemon (.onion)
+                                      ▲
+                                      │ Tor network
+                         ┌────────────┴────────────┐
+                         │                         │
+                  mgla-exit-a                 mgla-exit-b
+                         ▲                         ▲
+                         └────────────┬────────────┘
+                                      │
+                    mgla-haproxy (SOCKS5/SOCKS5h)
+                                      ▲
+                                      │ internal_network only
+                                      │
+                                mgla-monero
+```
+
+`mgla-monero` is attached only to Docker's internal network and has no direct
+Internet route. `mgla-haproxy` also has no external network attachment; its
+backend pool contains only the two Tor exit containers. The exit containers are
+the only services attached to the external bridge.
+
+Docker subnets and container addresses are generated at every launch and passed
+to Compose at runtime. They are not embedded in the published images.
+
+## Wallet Storage
+
+Wallet files stay on the host. The default directory is:
+
+```text
+$HOME/Downloads/Monero/wallets
+```
+
+Use another absolute directory when needed:
+
+```bash
+WALLET_HOST_DIR=/absolute/path/to/wallets bash run.sh
+```
+
+## Security Model
+
+The project uses:
+
+- non-root, read-only containers with dropped capabilities;
+- isolated internal and external Docker networks;
+- two independent Tor exits with HAProxy health checks and failover;
+- pinned Monero source revisions and targeted Alpine security updates;
+- native `linux/amd64` and `linux/arm64` CI builds;
+- vulnerability scanning of every final image before `latest` is published.
+
+The scans block known fixable critical and high findings. They reduce exposure,
+but do not prove that an image contains no unknown vulnerability or RCE.
+
+## Project Layout
+
+```text
+run.sh                       Project launcher and wallet menu
+monero/
+├── monero-cli.sh            Monero lifecycle controller
+├── compose.yaml             Isolated four-service stack
+└── docker/
+    ├── exit/                Tor exit image, scripts and torrc template
+    ├── haproxy/             HAProxy image, scripts and config template
+    └── monero/              Monero CLI source build and wallet launcher
+```
+
+See `monero/README.md` for module-specific details.
