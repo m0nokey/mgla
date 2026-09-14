@@ -9,7 +9,7 @@ kept in the launcher so the normal interactive workflow remains unchanged.
 - `monero-cli.sh` — the real launcher and lifecycle controller.
 - `compose.yaml` — the four-service stack definition.
 - `docker/exit` — one hardened Alpine image used by `mgla-exit-a` and `mgla-exit-b`.
-- `docker/haproxy` — the internal SOCKS5/SOCKS5h broker image.
+- `docker/haproxy` — the internal Tor SOCKS relay image.
 - `docker/monero` — a multi-stage Alpine source build and the wallet menu.
 
 There is no helper container and no test-client service. Network checks run from
@@ -78,7 +78,7 @@ bypass the internal SOCKS broker:
                          ▲                         ▲
                          └────────────┬────────────┘
                                       │
-                    mgla-haproxy (SOCKS5/SOCKS5h)
+                    mgla-haproxy (Tor SOCKS relay)
                                       ▲
                                       │ internal_network only
                                       │

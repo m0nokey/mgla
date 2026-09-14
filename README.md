@@ -33,11 +33,11 @@ bash run.sh
 Without Git:
 
 ```bash
-curl -fsSL --proto '=https' \
-  https://github.com/m0nokey/mgla/archive/refs/heads/main.tar.gz | tar -xz
-mv mgla-main mgla
-cd mgla
-bash run.sh
+mkdir mgla \
+&& curl -fsSL --proto '=https' "https://github.com/m0nokey/mgla/archive/refs/heads/main.tar.gz" \
+| tar -xz -C mgla --strip-components=1 \
+&& cd mgla \
+&& bash run.sh
 ```
 
 `run.sh` opens the project menu:
@@ -74,7 +74,7 @@ The wallet is at the bottom and has no direct Internet route:
                          ▲                         ▲
                          └────────────┬────────────┘
                                       │
-                    mgla-haproxy (SOCKS5/SOCKS5h)
+                    mgla-haproxy (Tor SOCKS relay)
                                       ▲
                                       │ internal_network only
                                       │
