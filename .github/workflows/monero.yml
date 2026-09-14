@@ -50,31 +50,37 @@ jobs:
           CI=1 DOCKER_DEFAULT_PLATFORM="${{ matrix.platform }}" bash monero-cli.sh
 
       - name: Scan exit image
-        uses: docker/scout-action@c94507b5bf72bd25244caafe9d4dab09fa2d687b # v1.18.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          command: cves
-          image: local://mgla-exit
-          platform: ${{ matrix.platform }}
-          only-severities: critical,high
-          only-fixed: true
-          exit-code: true
+          scan-type: image
+          image-ref: mgla-exit
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          scanners: vuln
+          severity: CRITICAL,HIGH
 
       - name: Scan HAProxy image
-        uses: docker/scout-action@c94507b5bf72bd25244caafe9d4dab09fa2d687b # v1.18.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          command: cves
-          image: local://mgla-haproxy
-          platform: ${{ matrix.platform }}
-          only-severities: critical,high
-          only-fixed: true
-          exit-code: true
+          scan-type: image
+          image-ref: mgla-haproxy
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          scanners: vuln
+          severity: CRITICAL,HIGH
 
       - name: Scan Monero image
-        uses: docker/scout-action@c94507b5bf72bd25244caafe9d4dab09fa2d687b # v1.18.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          command: cves
-          image: local://mgla-monero
-          platform: ${{ matrix.platform }}
-          only-severities: critical,high
-          only-fixed: true
-          exit-code: true
+          scan-type: image
+          image-ref: mgla-monero
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          scanners: vuln
+          severity: CRITICAL,HIGH
