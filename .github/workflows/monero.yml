@@ -139,18 +139,37 @@ jobs:
         env:
           IMAGE_REGISTRY: ghcr.io/m0nokey
           SOURCE_TAG: ${{ github.sha }}
-          RELEASE_TAG: ${{ env.MONERO_VERSION }}
         run: |
           set -eux
           for image in exit haproxy monero; do
-            tags=(
-              --tag "${IMAGE_REGISTRY}/mgla-${image}:latest"
-              --tag "${IMAGE_REGISTRY}/mgla-${image}:${RELEASE_TAG}"
-              --tag "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}"
-            )
-            sources=(
-              "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-amd64"
+            docker buildx imagetools create \
+              --tag "${IMAGE_REGISTRY}/mgla-${image}:latest" \
+              "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-amd64" \
               "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-arm64"
-            )
-            docker buildx imagetools create "${tags[@]}" "${sources[@]}"
           done
+
+      - name: Resolve latest manifest digests
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          latest_shas=""
+          for package in mgla-exit mgla-haproxy mgla-monero; do
+            digest="$(gh api \
+              "user/packages/container/${package}/versions?per_page=100" \
+              --jq 'first(.[] | select((.metadata.container.tags // []) | index("latest")) | .name) // empty')"
+            test -n "${digest}"
+            latest_shas="${latest_shas}${latest_shas:+,}${digest}"
+          done
+          echo "shas=${latest_shas}" >> "${GITHUB_OUTPUT}"
+
+      - name: Clean old GHCR versions
+        uses: snok/container-retention-policy@d3bdcf5ce9b05f685154e4a16c39233b245e3d53 # v3.1.0
+        with:
+          account: user
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: "mgla-exit mgla-haproxy mgla-monero"
+          tag-selection: both
+          cut-off: 1s
+          skip-shas: ${{ steps.latest.outputs.shas }}

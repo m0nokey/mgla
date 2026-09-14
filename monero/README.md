@@ -37,12 +37,6 @@ For a local source build instead of pulling, run:
 IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash monero-cli.sh
 ```
 
-For a versioned published image, set its tag explicitly:
-
-```bash
-IMAGE_TAG=v0.18.5.1 bash monero-cli.sh
-```
-
 GHCR packages must be public for unauthenticated pulls. Otherwise authenticate first with
 `docker login ghcr.io`.
 
@@ -128,9 +122,9 @@ minimal first version and can be added as a separate module option.
 GitHub Actions builds `linux/amd64` and `linux/arm64` on native runners, runs
 the Tor and network integration checks, and scans all three final images for
 fixed critical and high vulnerabilities. Pull requests and non-main branches
-only validate; successful pushes to `main` publish architecture-specific images
-and multi-architecture manifests to GHCR with `latest`, the Monero release tag,
-and the source commit tag.
+only validate; successful pushes to `main` publish one multi-architecture `latest`
+tag to GHCR. Temporary architecture tags and older package versions are removed
+after publication while the children required by `latest` are retained.
 
 Pull mode does not compile locally. Use `IMAGE_MODE=build` for a local source
 build; the build mode uses Docker's layer cache and refreshes the Alpine base
