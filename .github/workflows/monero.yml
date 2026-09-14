@@ -3,6 +3,7 @@ name: Monero module
 on:
   push:
     paths:
+      - "run.sh"
       - "monero/docker/**"
       - "monero/compose.yaml"
       - "monero/monero-cli.sh"
@@ -10,6 +11,7 @@ on:
       - ".github/workflows/monero.yml"
   pull_request:
     paths:
+      - "run.sh"
       - "monero/docker/**"
       - "monero/compose.yaml"
       - "monero/monero-cli.sh"

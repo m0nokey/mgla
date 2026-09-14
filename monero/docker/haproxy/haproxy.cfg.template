@@ -1,0 +1,28 @@
+global
+    log stdout format raw local0
+    maxconn 4096
+    insecure-fork-wanted
+    external-check
+    external-check preserve-env
+
+defaults
+    log global
+    mode tcp
+    option dontlognull
+    retries 3
+    timeout connect 5s
+    timeout client 60s
+    timeout server 60s
+    timeout check 10s
+    option log-health-checks
+
+frontend socks_proxy
+    bind @HAPROXY_IP@:9095
+    default_backend socks_pool
+
+backend socks_pool
+    option external-check
+    external-check command /usr/local/bin/exit_ready_check
+    option redispatch 1
+    server exit_a @EXIT_A_IP@:9095 check inter 10s rise 1 fall 2
+    server exit_b @EXIT_B_IP@:9095 check inter 10s rise 1 fall 2 backup

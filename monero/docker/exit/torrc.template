@@ -1,0 +1,22 @@
+Log notice stdout
+SocksPort @EXIT_IP@:9095
+SocksPolicy accept @HAPROXY_IP@/32
+SocksPolicy reject *
+ControlSocket /run/tor/control.sock
+ControlSocketsGroupWritable 1
+CookieAuthentication 1
+CookieAuthFile /run/tor/control.authcookie
+CookieAuthFileGroupReadable 1
+DataDirectory /var/lib/tor/data
+CircuitBuildTimeout 60
+NewCircuitPeriod 30
+EnforceDistinctSubnets 1
+ConnectionPadding 1
+ReducedConnectionPadding 0
+BandwidthRate 100 KB
+BandwidthBurst 150 KB
+ConfluxEnabled 0
+SafeSocks 1
+ClientRejectInternalAddresses 1
+DisableDebuggerAttachment 1
+ClientUseIPv6 0

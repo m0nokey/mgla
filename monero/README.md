@@ -17,10 +17,10 @@ the final `mgla-monero` container itself.
 
 ## Run locally
 
-From the repository root, pull the published multi-architecture images and start the stack:
+From the repository root, start the project launcher and select the Monero scenario:
 
 ```bash
-bash monero-cli.sh
+bash run.sh
 ```
 
 The default mode pulls these images from GHCR:
@@ -34,14 +34,18 @@ ghcr.io/m0nokey/mgla-monero:latest
 For a local source build instead of pulling, run:
 
 ```bash
-IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash monero-cli.sh
+IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash run.sh
 ```
 
 GHCR packages must be public for unauthenticated pulls. Otherwise authenticate first with
 `docker login ghcr.io`.
 
-The compatibility wrapper at the repository root (`monero-cli.sh`) delegates to this module, so
-running `bash monero-cli.sh` from the repository root also works.
+The root `monero-cli.sh` is retained as a compatibility wrapper. Direct module
+invocation is also available:
+
+```bash
+bash monero/monero-cli.sh
+```
 
 Wallet files are mounted from the host. The default is:
 
@@ -52,7 +56,7 @@ $HOME/Downloads/Monero/wallets
 Set an explicit absolute path when needed:
 
 ```bash
-WALLET_HOST_DIR=/absolute/path/to/monero/wallets bash monero-cli.sh
+WALLET_HOST_DIR=/absolute/path/to/monero/wallets bash run.sh
 ```
 
 The menu lets you open an existing wallet, create a new named wallet, restore a
