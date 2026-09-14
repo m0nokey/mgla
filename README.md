@@ -33,11 +33,10 @@ bash run.sh
 Without Git:
 
 ```bash
-mkdir mgla \
-&& curl -fsSL --proto '=https' "https://github.com/m0nokey/mgla/archive/refs/heads/main.tar.gz" \
-| tar -xz -C mgla --strip-components=1 \
+install -d -m 0700 mgla \
+&& curl -fsSL https://github.com/m0nokey/mgla/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C mgla \
 && cd mgla \
-&& bash run.sh
+&& bash ./run.sh
 ```
 
 `run.sh` opens the project menu:
