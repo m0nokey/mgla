@@ -116,7 +116,8 @@ The project uses:
 The scans block known fixable critical and high findings. They reduce exposure,
 but do not prove that an image contains no unknown vulnerability or RCE.
 
-Full reports for all severity levels are published in
+Each workflow run shows a per-image vulnerability table in its Summary. Full
+reports for all severity levels are published in
 [GitHub Code scanning](https://github.com/m0nokey/mgla/security/code-scanning).
 Each [workflow run](https://github.com/m0nokey/mgla/actions/workflows/monero.yml)
 also provides downloadable SARIF artifacts for both architectures.

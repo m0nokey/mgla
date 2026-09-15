@@ -102,6 +102,9 @@ jobs:
           scanners: vuln
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
 
+      - name: Publish security summary
+        run: python3 monero/ci/security-summary.py
+
       - name: Upload security report artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.1
         with:
