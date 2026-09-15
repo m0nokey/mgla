@@ -6,23 +6,17 @@ module_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 project="mgla"
 workdir="$(mktemp -d -t "${project}.XXXXXXXX")"
-wallet_store_host_dir="${WALLET_STORE_HOST_DIR:-${WALLET_HOST_DIR:-${HOME}/Downloads/Monero}}"
-wallet_vault_name="${WALLET_VAULT_NAME:-wallets.mgla}"
+wallet_store_host_dir="${WALLET_STORE_HOST_DIR:-${WALLET_HOST_DIR:-${HOME}/.mgla}}"
 wallet_vault_size="${WALLET_VAULT_SIZE:-128M}"
 
 if [[ "${wallet_store_host_dir}" != /* ]]; then
     echo "[error] WALLET_STORE_HOST_DIR must be an absolute path" >&2
     exit 1
 fi
-if [[ ! "${wallet_vault_name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "${wallet_vault_name}" == *. ]]; then
-    echo "[error] WALLET_VAULT_NAME must be a simple filename" >&2
-    exit 1
-fi
 if [[ ! "${wallet_vault_size}" =~ ^[0-9]+[KMGkmg]?$ ]]; then
     echo "[error] WALLET_VAULT_SIZE must be a size such as 128M" >&2
     exit 1
 fi
-wallet_vault_host_path="${wallet_store_host_dir}/${wallet_vault_name}"
 
 image_mode="${IMAGE_MODE-pull}"
 image_registry="${IMAGE_REGISTRY-ghcr.io/m0nokey}"
@@ -297,9 +291,9 @@ echo "[info] internal network: ${int_network_container_subnet_cidr_ipv4}"
 echo "[info] Monero release: ${monero_version}"
 echo "[info] image mode: ${image_mode}"
 echo "[info] image tag: ${image_tag}"
-echo "[info] wallet vault: ${wallet_vault_host_path} (${wallet_vault_size})"
+echo "[info] wallet vault directory: ${wallet_store_host_dir} (${wallet_vault_size} per vault)"
 
-export project wallet_store_host_dir wallet_vault_name wallet_vault_host_path wallet_vault_size
+export project wallet_store_host_dir wallet_vault_size
 export monero_version monero_commit
 export exit_image haproxy_image monero_image
 export exit_a_container exit_b_container haproxy_container monero_container

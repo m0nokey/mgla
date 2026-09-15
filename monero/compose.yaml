@@ -119,9 +119,7 @@ services:
     environment:
       HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
       HOME: /tmp/home
-      WALLET_VAULT_FILE: "/monero/vault-store/${wallet_vault_name}"
-      WALLET_VAULT_HOST_PATH: "${wallet_vault_host_path}"
-      WALLET_VAULT_NAME: "${wallet_vault_name}"
+      WALLET_VAULT_HOST_DIR: "${wallet_store_host_dir}"
       WALLET_VAULT_SIZE: "${wallet_vault_size}"
     tmpfs:
       - /monero/wallets:rw,nosuid,nodev,noexec,mode=0700,uid=1000,gid=1000,size=${wallet_vault_size}

@@ -46,24 +46,26 @@ For CI, debugging, or direct module invocation:
 bash monero/monero-cli.sh
 ```
 
-The host stores a single encrypted wallet vault with a default capacity of
-128 MB. The default file is:
+The host stores encrypted wallet vault files in `$HOME/.mgla/`. Each vault
+has a default capacity of 128 MB and can contain multiple named wallets:
 
 ```text
-$HOME/Downloads/Monero/wallets.mgla
+$HOME/.mgla/
+├── personal.mgla
+└── savings.mgla
 ```
 
-Set an explicit host directory and vault filename when needed:
+The startup menu lists the existing `.mgla` files, lets you open one, or lets
+you create a new vault. To use another host directory:
 
 ```bash
-WALLET_STORE_HOST_DIR=/absolute/path/to/Monero \
-WALLET_VAULT_NAME=portfolio.mgla bash run.sh
+WALLET_STORE_HOST_DIR=/absolute/path/to/.mgla bash run.sh
 ```
 
 The first launch generates a high-entropy password and displays it once. Save
-it offline; losing it means losing access to the vault. Seed phrases can
-restore wallets, but not local cache and labels. The vault is the only host
-bind mount. Wallet files are decrypted only inside `/monero/wallets`, a private
+it offline; losing it means losing access to that vault. Seed phrases can
+restore wallets, but not local cache and labels. The vault directory is the
+only host bind mount. Wallet files are decrypted only inside `/monero/wallets`, a private
 tmpfs that is cleared when the launcher exits.
 
 The menu lets you open an existing wallet, create a new named wallet, restore a

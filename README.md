@@ -90,24 +90,27 @@ to Compose at runtime. They are not embedded in the published images.
 
 ## Wallet Storage
 
-Monero stores one fixed-size encrypted vault on the host. Its default capacity
-is 128 MB. The default file is:
+Monero stores fixed-size encrypted vault files in the host directory
+`$HOME/.mgla/`. Each vault has a default capacity of 128 MB and can contain
+multiple named wallets:
 
 ```text
-$HOME/Downloads/Monero/wallets.mgla
+$HOME/.mgla/
+├── personal.mgla
+└── savings.mgla
 ```
 
-Choose another host directory or vault filename when needed:
+At startup, the menu lists the existing `.mgla` files and allows you to open one
+or create a new vault. To use another host directory:
 
 ```bash
-WALLET_STORE_HOST_DIR=/absolute/path/to/Monero \
-WALLET_VAULT_NAME=portfolio.mgla bash run.sh
+WALLET_STORE_HOST_DIR=/absolute/path/to/.mgla bash run.sh
 ```
 
-On first launch, the application generates a high-entropy vault password and
-shows it once. Save it offline: losing it means losing access to the vault.
+On first creation, the application generates a high-entropy vault password and
+shows it once. Save it offline: losing it means losing access to that vault.
 Wallet seed phrases can restore wallets, but they do not restore local wallet
-cache and labels. The host receives only the encrypted vault file; wallets are
+cache and labels. The host receives only encrypted vault files; wallets are
 opened inside the Monero container in a private tmpfs and removed when the
 launcher exits.
 
@@ -129,7 +132,7 @@ but do not prove that an image contains no unknown vulnerability or RCE.
 The [Monero CI workflow](https://github.com/m0nokey/mgla/actions/workflows/monero.yml)
 always opens the list of runs; the newest run is at the top. Open it and select
 Summary to see the per-image vulnerability table. The current Trivy v0.74.0
-run is [run #18](https://github.com/m0nokey/mgla/actions/runs/34924206682).
+run is [run #21](https://github.com/m0nokey/mgla/actions/runs/34936153962).
 Full reports for all severity levels are published in
 [GitHub Code scanning](https://github.com/m0nokey/mgla/security/code-scanning).
 Each run also provides downloadable SARIF artifacts for both architectures.

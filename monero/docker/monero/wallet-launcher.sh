@@ -96,13 +96,15 @@ cleanup_done=0
 socks_port="${socks_port:-9095}"
 wallet_root="/monero/wallets"
 vault_binary="/opt/monero/mgla-vault"
-vault_file="${WALLET_VAULT_FILE:-/monero/vault-store/wallets.mgla}"
-vault_host_path="${WALLET_VAULT_HOST_PATH:-${vault_file}}"
+vault_store="/monero/vault-store"
+vault_host_dir="${WALLET_VAULT_HOST_DIR:-${HOME}/.mgla}"
 vault_size="${WALLET_VAULT_SIZE:-128M}"
+vault_name=""
+vault_file=""
+vault_host_path=""
 vault_password=""
 vault_loaded=0
 vault_dirty=0
-wallet_host_root="${vault_host_path}"
 daemon_mode="${daemon_mode:-untrusted}"
 
 if [[ -z "${HAPROXY_IP:-}" ]]; then
@@ -222,22 +224,138 @@ save_vault() {
     return 1
 }
 
+vault_name_valid() {
+    [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.mgla$ ]]
+}
+
+set_vault_target() {
+    local name="$1"
+
+    vault_name="${name}"
+    vault_file="${vault_store}/${name}"
+    vault_host_path="${vault_host_dir}/${name}"
+}
+
+list_vault_names() {
+    local path name
+
+    for path in "${vault_store}"/*.mgla; do
+        [[ -f "${path}" ]] || continue
+        name="${path##*/}"
+        vault_name_valid "${name}" || continue
+        printf '%s\n' "${name}"
+    done | sort
+}
+
+prompt_new_vault() {
+    local name
+
+    while true; do
+        clear_screen
+        tty_print "Create encrypted wallet vault"
+        tty_print "------------------------------------------------------------"
+        tty_print "Enter a short name for the vault."
+        tty_print "The .mgla extension is added automatically."
+        tty_print "Allowed: A-Z, a-z, 0-9, ., _ and -"
+        tty_blank
+        tty_print "b. Back"
+        tty_blank
+
+        name="$(read_choice "Vault name: ")"
+        case "${name}" in
+          b|B) return 2 ;;
+        esac
+
+        [[ -n "${name}" ]] || continue
+        if [[ "${name}" != *.mgla ]]; then
+            name="${name}.mgla"
+        fi
+
+        if ! vault_name_valid "${name}"; then
+            tty_print "Invalid vault name."
+            pause_or_enter
+            continue
+        fi
+        if [[ -e "${vault_store}/${name}" ]]; then
+            tty_print "That vault name already exists or is reserved."
+            pause_or_enter
+            continue
+        fi
+
+        set_vault_target "${name}"
+        return 0
+    done
+}
+
+choose_vault() {
+    local -a names=()
+    local name choice i
+
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] && names+=("${name}")
+    done < <(list_vault_names)
+
+    while true; do
+        clear_screen
+        tty_print "Monero wallet vaults"
+        tty_print "------------------------------------------------------------"
+        tty_print "Vault directory: ${vault_host_dir}"
+        tty_blank
+
+        if (( ${#names[@]} == 0 )); then
+            tty_print "No encrypted vaults found."
+        else
+            tty_print "Vaults:"
+            for ((i = 0; i < ${#names[@]}; i++)); do
+                tty_printf "%d.  %s\n" "$((i + 1))" "${names[i]}"
+            done
+        fi
+
+        tty_blank
+        tty_print "n. Create new vault"
+        tty_print "x. Exit"
+        tty_blank
+
+        choice="$(read_choice "?: ")"
+        case "${choice}" in
+          n|N)
+            prompt_new_vault && return 0
+            ;;
+          x|X)
+            return 1
+            ;;
+        esac
+
+        [[ "${choice}" =~ ^[0-9]+$ ]] || continue
+        (( ${#names[@]} > 0 && choice >= 1 && choice <= ${#names[@]} )) || continue
+        set_vault_target "${names[$((choice - 1))]}"
+        return 0
+    done
+}
+
 open_or_create_vault() {
     if [[ ! -x "${vault_binary}" ]]; then
         tty_print "error: vault binary is missing"
+        return 1
+    fi
+    if ! mkdir -p -m 700 "${vault_store}" 2>/dev/null; then
+        tty_print "error: cannot access host vault directory"
         return 1
     fi
     if ! mkdir -p -m 700 "${wallet_root}" 2>/dev/null; then
         tty_print "error: cannot access temporary wallet directory"
         return 1
     fi
+    if ! choose_vault; then
+        return 1
+    fi
 
-    if [[ -e "${vault_file}" ]]; then
+    if [[ -f "${vault_file}" ]]; then
         while true; do
             clear_screen
             tty_print "Open encrypted wallet vault"
             tty_print "------------------------------------------------------------"
-            tty_print "Vault file: ${vault_host_root}"
+            tty_print "Vault file: ${vault_host_path}"
             tty_blank
             if ! read_vault_password; then
                 return 1
@@ -261,7 +379,7 @@ open_or_create_vault() {
     clear_screen
     tty_print "Create encrypted wallet vault"
     tty_print "------------------------------------------------------------"
-    tty_print "No vault found at: ${vault_host_root}"
+    tty_print "No vault found at: ${vault_host_path}"
     tty_print "A fixed-size ${vault_size} vault will be created."
     tty_blank
     tty_print "A random password will be shown once. Save it offline."
@@ -294,6 +412,7 @@ open_or_create_vault() {
     tty_print "[ok] encrypted wallet vault created"
     pause_or_enter
 }
+
 _xmr_nodes_raw() {
     local json=""
     local html=""
@@ -757,7 +876,7 @@ choose_existing_wallet() {
         clear_screen
         tty_print "Open existing wallet"
         tty_print "------------------------------------------------------------"
-        tty_print "Wallet vault: ${wallet_host_root}"
+        tty_print "Wallet vault: ${vault_host_path}"
         tty_blank
 
         if (( ${#names[@]} == 0 )); then
@@ -1023,7 +1142,7 @@ while true; do
     clear_screen
     tty_print "Monero wallet launcher"
     tty_print "------------------------------------------------------------"
-    tty_print "Wallet vault: ${wallet_host_root}"
+    tty_print "Wallet vault: ${vault_host_path}"
     tty_blank
     tty_print "Choose action:"
     tty_print "1. Open existing wallet"
