@@ -41,6 +41,11 @@ RUN apk upgrade --no-cache \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
     && printf '%s\n' UTC > /etc/timezone
 
+# Pin the fixed nghttp2 runtime used by curl.
+RUN apk add --no-cache \
+        --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
+        nghttp2-libs=1.70.0-r0
+
 WORKDIR /tmp/electrum
 COPY requirements.lock /tmp/electrum/requirements.lock
 
@@ -116,6 +121,11 @@ RUN apk upgrade --no-cache \
     && adduser -S -D -H -u 1000 -G electrum -s /sbin/nologin electrum \
     && install -d -m 0700 -o 1000 -g 1000 /home/electrum/.electrum \
     && install -d -m 0755 -o root -g root /opt/app /opt/venv
+
+# Pin the fixed nghttp2 runtime used by curl.
+RUN apk add --no-cache \
+        --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
+        nghttp2-libs=1.70.0-r0
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --chmod=0755 docker/bitcoin/entrypoint.sh /usr/local/bin/entrypoint

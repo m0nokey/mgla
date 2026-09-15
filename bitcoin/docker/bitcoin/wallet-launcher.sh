@@ -31,6 +31,7 @@ probe_height=""
 readonly MAX_INPUT_LENGTH=512
 readonly MAX_BTC_SATS=2100000000000000
 readonly MAX_FEE_RATE_MILLISATVB=1000000000
+readonly PROBE_ATTEMPTS=20
 
 ipv4_address_valid() {
     local address="${1:-}" octet
@@ -70,10 +71,6 @@ fi
 if ! command -v timeout >/dev/null 2>&1; then
     printf '%s\n' '[error] timeout is required by the Electrum launcher' >&2
     exit 1
-fi
-
-if [[ -r /dev/tty && -w /dev/tty ]]; then
-    tty_is_tty=1
 fi
 
 tty_available() {
@@ -160,7 +157,7 @@ cleanup() {
 trap cleanup EXIT
 trap on_signal INT TERM HUP QUIT
 
-if [[ -t 0 && -t 1 ]] && printf '' > /dev/tty 2>/dev/null; then
+if [[ -t 0 && -t 1 ]]; then
     if original_stty="$(stty -g < /dev/tty 2>/dev/null)"; then
         tty_is_tty=1
         stty -echoctl < /dev/tty >/dev/null 2>&1 || true
@@ -341,7 +338,7 @@ configure_electrum() {
     set_config auto_connect false
     set_config oneserver true
     set_config noonion false
-    set_config network_timeout 12
+    set_config network_timeout 20
     set_config use_exchange_rate true
     set_config currency USD
     set_config use_exchange BitPay
@@ -380,7 +377,7 @@ probe_server() {
     set_config server "${server}"
     electrum_probe daemon -d >/dev/null 2>&1 || true
 
-    for ((attempt = 1; attempt <= 6; attempt++)); do
+    for ((attempt = 1; attempt <= PROBE_ATTEMPTS; attempt++)); do
         info="$(electrum_probe getinfo 2>/dev/null || true)"
         connected="$(printf '%s\n' "${info}" | json_value connected)"
         height="$(printf '%s\n' "${info}" | json_number_value server_height)"
