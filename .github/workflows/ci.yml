@@ -495,7 +495,7 @@ jobs:
           for package in mgla-exit mgla-haproxy mgla-monero mgla-bitcoin; do
             digests="$(gh api \
               "user/packages/container/${package}/versions?per_page=100" \
-              --jq "[.[] | select((.metadata.container.tags // []) | any(.[]; . == \"latest\" or . == \"${SOURCE_TAG}-amd64\" or . == \"${SOURCE_TAG}-arm64\"))) | .name] | join(\",\")")"
+              --jq "[.[] | select((.metadata.container.tags // []) | any(.[]; . == \"latest\" or . == \"${SOURCE_TAG}-amd64\" or . == \"${SOURCE_TAG}-arm64\")) | .name] | join(\",\")")"
             test -n "${digests}"
             latest_shas="${latest_shas}${latest_shas:+,}${digests}"
           done
