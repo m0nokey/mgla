@@ -99,8 +99,6 @@ tty_line() {
 clear_screen() {
     if tty_available; then
         printf '\033[2J\033[H\033[3J' > /dev/tty
-    else
-        printf '\033[2J\033[H\033[3J'
     fi
 }
 
@@ -162,7 +160,7 @@ cleanup() {
 trap cleanup EXIT
 trap on_signal INT TERM HUP QUIT
 
-if [[ -t 0 && -t 1 && -r /dev/tty && -w /dev/tty ]]; then
+if [[ -t 0 && -t 1 ]] && printf '' > /dev/tty 2>/dev/null; then
     if original_stty="$(stty -g < /dev/tty 2>/dev/null)"; then
         tty_is_tty=1
         stty -echoctl < /dev/tty >/dev/null 2>&1 || true
