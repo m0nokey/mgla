@@ -1040,9 +1040,11 @@ mod tests {
     use tempfile::tempdir;
 
     fn test_keys() -> Keys {
+        let mut xts = [0x11; XTS_KEY_SIZE];
+        xts[XTS_KEY_SIZE / 2..].fill(0x22);
         Keys {
-            xts: [0x11; XTS_KEY_SIZE],
-            mac: [0x22; MAC_KEY_SIZE],
+            xts,
+            mac: [0x33; MAC_KEY_SIZE],
         }
     }
 
