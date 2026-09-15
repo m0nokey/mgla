@@ -69,7 +69,7 @@ jobs:
           set -euo pipefail
           mapfile -t shell_files < <(
             find monero -type f -name '*.sh' -print
-            printf '%s\\n' run.sh
+            printf '%s\n' run.sh
           )
           test "${#shell_files[@]}" -gt 0
           shellcheck --severity=warning "${shell_files[@]}"
@@ -430,7 +430,7 @@ jobs:
           skip-shas: ${{ steps.latest.outputs.shas }}
 
   rescan-latest:
-    name: rescan latest (${{ matrix.architecture }})
+    name: latest image rescan
     if: github.event_name == 'schedule'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45

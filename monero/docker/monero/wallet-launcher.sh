@@ -97,7 +97,6 @@ vault_binary="/opt/monero/mgla-vault"
 vault_store="/monero/vault-store"
 vault_host_dir="${WALLET_VAULT_HOST_DIR:-${HOME}/.mgla}"
 vault_size="${WALLET_VAULT_SIZE:-128M}"
-vault_name=""
 vault_file=""
 vault_host_path=""
 vault_loaded=0
@@ -196,7 +195,6 @@ vault_name_valid() {
 set_vault_target() {
     local name="$1"
 
-    vault_name="${name}"
     vault_file="${vault_store}/${name}"
     vault_host_path="${vault_host_dir}/${name}"
 }
@@ -303,11 +301,11 @@ open_or_create_vault() {
         tty_print "error: vault binary is missing"
         return 1
     fi
-    if ! mkdir -p -m 700 "${vault_store}" 2>/dev/null; then
+    if ! mkdir -p "${vault_store}" 2>/dev/null || ! chmod 700 "${vault_store}" 2>/dev/null; then
         tty_print "error: cannot access host vault directory"
         return 1
     fi
-    if ! mkdir -p -m 700 "${wallet_root}" 2>/dev/null; then
+    if ! mkdir -p "${wallet_root}" 2>/dev/null || ! chmod 700 "${wallet_root}" 2>/dev/null; then
         tty_print "error: cannot access temporary wallet directory"
         return 1
     fi
@@ -458,8 +456,8 @@ pick_best_node() {
     local topn="${2:-15}"
     local used=""
 
-    local r host port blocks
-    for r in $(seq 1 "$rounds"); do
+    local host port blocks
+    while (( rounds > 0 )); do
         while IFS=$'\t' read -r host port blocks; do
             [[ -z "${host:-}" || -z "${port:-}" ]] && continue
 
@@ -476,6 +474,7 @@ pick_best_node() {
         done < <(_xmr_nodes_raw | sort -t$'\t' -k3,3nr | head -n "$topn" || true)
 
         sleep 1
+        rounds=$((rounds - 1))
     done
 
     return 1
