@@ -15,7 +15,10 @@ ENV AIOHTTP_NO_EXTENSIONS=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     PROPCACHE_NO_EXTENSIONS=1 \
-    YARL_NO_EXTENSIONS=1
+    YARL_NO_EXTENSIONS=1 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC
 
 RUN apk upgrade --no-cache \
     && apk add --no-cache \
@@ -33,7 +36,10 @@ RUN apk upgrade --no-cache \
         py3-virtualenv \
         py3-wheel \
         python3 \
-        python3-dev
+        python3-dev \
+        tzdata \
+    && cp /usr/share/zoneinfo/UTC /etc/localtime \
+    && printf '%s\n' UTC > /etc/timezone
 
 WORKDIR /tmp/electrum
 COPY requirements.lock /tmp/electrum/requirements.lock
@@ -81,7 +87,10 @@ ARG ELECTRUM_ARCHIVE_SHA256=f38cee333c866986cdfb304428fa7487affc429c3853fc80e982
 
 ENV HOME=/home/electrum \
     ELECTRUMDIR=/home/electrum/.electrum \
-    PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC
 
 LABEL org.opencontainers.image.title="mgla Bitcoin Electrum CLI" \
       org.opencontainers.image.description="Official Electrum CLI on Alpine with Tor-only transport" \
@@ -93,6 +102,7 @@ RUN apk upgrade --no-cache \
     && apk add --no-cache \
         bash \
         ca-certificates \
+        coreutils \
         curl \
         libgcc \
         libsecp256k1 \
@@ -100,6 +110,8 @@ RUN apk upgrade --no-cache \
         py3-cryptography \
         python3 \
         tzdata \
+    && cp /usr/share/zoneinfo/UTC /etc/localtime \
+    && printf '%s\n' UTC > /etc/timezone \
     && addgroup -g 1000 -S electrum \
     && adduser -S -D -H -u 1000 -G electrum -s /sbin/nologin electrum \
     && install -d -m 0700 -o 1000 -g 1000 /home/electrum/.electrum /opt/app /opt/venv
@@ -108,7 +120,9 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chmod=0755 docker/bitcoin/entrypoint.sh /usr/local/bin/entrypoint
 COPY --chmod=0755 docker/bitcoin/wallet-launcher.sh /opt/app/bitcoin
 
-RUN /opt/venv/bin/electrum --offline --version \
+RUN command -v timeout \
+    && test -e /usr/share/zoneinfo/UTC \
+    && /opt/venv/bin/electrum --offline --version \
     && /opt/venv/bin/python -c 'import aiohttp, aiorpcx, electrum_ecc, cryptography, qrcode; print("Electrum runtime imports: OK")' \
     && test -x /opt/venv/bin/qr \
     && chmod 0755 /opt/app/bitcoin /usr/local/bin/entrypoint \

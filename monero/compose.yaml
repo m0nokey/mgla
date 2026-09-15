@@ -17,6 +17,7 @@ services:
       - no-new-privileges:true
     environment:
       EXIT_IP: "${int_network_container_exit_a_ipv4}"
+      TZ: UTC
       HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,mode=1777
@@ -50,6 +51,7 @@ services:
       - no-new-privileges:true
     environment:
       EXIT_IP: "${int_network_container_exit_b_ipv4}"
+      TZ: UTC
       HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,mode=1777
@@ -87,6 +89,7 @@ services:
       - no-new-privileges:true
     environment:
       HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
+      TZ: UTC
       EXIT_A_IP: "${int_network_container_exit_a_ipv4}"
       EXIT_B_IP: "${int_network_container_exit_b_ipv4}"
     tmpfs:
@@ -126,6 +129,7 @@ services:
       - no-new-privileges:true
     environment:
       HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
+      TZ: UTC
       HOME: /tmp/home
       WALLET_VAULT_HOST_DIR: "${wallet_store_host_dir}"
       WALLET_VAULT_SIZE: "${wallet_vault_size}"
