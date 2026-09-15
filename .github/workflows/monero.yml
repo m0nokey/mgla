@@ -61,7 +61,7 @@ jobs:
           CI=1 DOCKER_DEFAULT_PLATFORM="${{ matrix.platform }}" bash monero/monero-cli.sh
 
       - name: Prepare security report directory
-        run: mkdir -p .trivy
+        run: mkdir -p trivy-reports
 
       - name: Generate exit security report
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -69,7 +69,7 @@ jobs:
           scan-type: image
           image-ref: ghcr.io/m0nokey/mgla-exit:${{ github.sha }}-${{ matrix.architecture }}
           format: sarif
-          output: .trivy/exit-${{ matrix.architecture }}.sarif
+          output: trivy-reports/exit-${{ matrix.architecture }}.sarif
           exit-code: "0"
           ignore-unfixed: false
           vuln-type: os,library
@@ -82,7 +82,7 @@ jobs:
           scan-type: image
           image-ref: ghcr.io/m0nokey/mgla-haproxy:${{ github.sha }}-${{ matrix.architecture }}
           format: sarif
-          output: .trivy/haproxy-${{ matrix.architecture }}.sarif
+          output: trivy-reports/haproxy-${{ matrix.architecture }}.sarif
           exit-code: "0"
           ignore-unfixed: false
           vuln-type: os,library
@@ -95,7 +95,7 @@ jobs:
           scan-type: image
           image-ref: ghcr.io/m0nokey/mgla-monero:${{ github.sha }}-${{ matrix.architecture }}
           format: sarif
-          output: .trivy/monero-${{ matrix.architecture }}.sarif
+          output: trivy-reports/monero-${{ matrix.architecture }}.sarif
           exit-code: "0"
           ignore-unfixed: false
           vuln-type: os,library
@@ -103,10 +103,10 @@ jobs:
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
 
       - name: Upload security report artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: security-reports-${{ matrix.architecture }}
-          path: .trivy/*.sarif
+          path: trivy-reports/*.sarif
           if-no-files-found: error
           retention-days: 30
 
@@ -114,21 +114,21 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
         with:
-          sarif_file: .trivy/exit-${{ matrix.architecture }}.sarif
+          sarif_file: trivy-reports/exit-${{ matrix.architecture }}.sarif
           category: mgla-exit-${{ matrix.architecture }}
 
       - name: Upload HAProxy report to GitHub Security
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
         with:
-          sarif_file: .trivy/haproxy-${{ matrix.architecture }}.sarif
+          sarif_file: trivy-reports/haproxy-${{ matrix.architecture }}.sarif
           category: mgla-haproxy-${{ matrix.architecture }}
 
       - name: Upload Monero report to GitHub Security
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
         with:
-          sarif_file: .trivy/monero-${{ matrix.architecture }}.sarif
+          sarif_file: trivy-reports/monero-${{ matrix.architecture }}.sarif
           category: mgla-monero-${{ matrix.architecture }}
 
       - name: Scan exit image
