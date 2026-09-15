@@ -5,7 +5,7 @@ services:
     logging:
       driver: "none"
     build:
-      context: ./docker/exit
+      context: ../monero/docker/exit
       dockerfile: Dockerfile
     init: true
     stop_signal: SIGTERM
@@ -41,6 +41,9 @@ services:
     image: ${exit_image:-mgla-exit:latest}
     logging:
       driver: "none"
+    build:
+      context: ../monero/docker/exit
+      dockerfile: Dockerfile
     init: true
     stop_signal: SIGTERM
     stop_grace_period: 5s
@@ -76,7 +79,7 @@ services:
     logging:
       driver: "none"
     build:
-      context: ./docker/haproxy
+      context: ../monero/docker/haproxy
       dockerfile: Dockerfile
     init: true
     stop_signal: SIGTERM
@@ -105,51 +108,51 @@ services:
       internal_network:
         ipv4_address: ${int_network_container_haproxy_ipv4}
 
-  monero:
-    container_name: ${monero_container}
-    image: ${monero_image:-mgla-monero:latest}
+  bitcoin:
+    container_name: ${bitcoin_container}
+    image: ${bitcoin_image:-mgla-bitcoin:latest}
     logging:
       driver: "none"
     build:
-      context: ./docker/monero
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/bitcoin/Dockerfile
       args:
-        MONERO_VERSION: "${monero_version}"
-        MONERO_COMMIT: "${monero_commit}"
+        ALPINE_VERSION: "${alpine_version}"
+        ELECTRUM_VERSION: "${electrum_version}"
+        ELECTRUM_ARCHIVE_SHA256: "${electrum_archive_sha256}"
     init: true
     stop_signal: SIGTERM
-    stop_grace_period: 30s
+    stop_grace_period: 10s
+    user: "${bitcoin_container_uid:-1000}:${bitcoin_container_gid:-1000}"
     cap_drop: ["ALL"]
     read_only: true
     ipc: none
     pids_limit: 128
-    mem_limit: 2g
+    mem_limit: 768m
     cpus: "1.0"
     security_opt:
       - no-new-privileges:true
     environment:
       HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
       TZ: UTC
-      HOME: /tmp/home
-      WALLET_VAULT_HOST_DIR: "${wallet_store_host_dir}"
-      WALLET_VAULT_SIZE: "${wallet_vault_size}"
+      HOME: /home/electrum
+      ELECTRUMDIR: /home/electrum/.electrum
     tmpfs:
-      - /monero/wallets:rw,nosuid,nodev,noexec,mode=0700,uid=1000,gid=1000,size=${wallet_vault_size}
       - /tmp:rw,nosuid,nodev,noexec,mode=1777
-      - /tmp/home:rw,nosuid,nodev,noexec,mode=0700,uid=1000,gid=1000
+      - /run:rw,nosuid,nodev,noexec,mode=0755
     volumes:
-      - "${wallet_store_host_dir}:/monero/vault-store:rw"
+      - "${wallet_store_host_dir}:/home/electrum/.electrum:rw"
     healthcheck:
-      test: ["CMD", "/opt/monero/monero-wallet-cli", "--version"]
+      test: ["CMD", "/opt/venv/bin/electrum", "--offline", "--version"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 3
-      start_period: 5s
+      start_period: 10s
     depends_on:
       - haproxy
     networks:
       internal_network:
-        ipv4_address: ${int_network_container_app_ipv4}
+        ipv4_address: ${int_network_container_bitcoin_ipv4}
 
 networks:
   external_network:

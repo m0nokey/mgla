@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!entrypoint.sh
+!exit-ready-check.sh
+!haproxy.cfg.template
+!render-haproxy-config.sh
+!tor-control.py

@@ -4,6 +4,7 @@ IFS=$'\n\t'
 
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 monero_launcher="$project_dir/monero/monero-cli.sh"
+bitcoin_launcher="$project_dir/bitcoin/bitcoin-cli.sh"
 
 clear_menu() {
     [[ -t 1 ]] || return 0
@@ -21,6 +22,7 @@ show_main_menu() {
         'mgla' \
         '------------------------------------------------------------' \
         '1. Monero wallet' \
+        '2. Bitcoin wallet' \
         'q. Exit' \
         '------------------------------------------------------------'
     printf '%s' 'Select a scenario: '
@@ -55,6 +57,30 @@ while true; do
                     ;;
                 *)
                     printf '[error] Monero scenario exited with status %d\n' "$status" >&2
+                    pause_for_input
+                    ;;
+            esac
+            ;;
+        2)
+            if [[ ! -x "$bitcoin_launcher" ]]; then
+                printf '[error] Bitcoin launcher is missing or not executable: %s\n' \
+                    "$bitcoin_launcher" >&2
+                pause_for_input
+                continue
+            fi
+
+            printf '\n[info] starting Bitcoin scenario\n'
+            if bash "$bitcoin_launcher"; then
+                status=0
+            else
+                status=$?
+            fi
+
+            case "$status" in
+                0|130|143)
+                    ;;
+                *)
+                    printf '[error] Bitcoin scenario exited with status %d\n' "$status" >&2
                     pause_for_input
                     ;;
             esac

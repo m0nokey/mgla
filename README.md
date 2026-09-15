@@ -1,98 +1,102 @@
 # mgla
 
-`mgla` is a privacy-oriented container workspace for cryptocurrency CLI
-wallets. Wallet modules use an isolated Tor transport instead of receiving a
-direct Internet route.
+`mgla` is a privacy-oriented Docker workspace for cryptocurrency CLI wallets.
+The project provides separate Monero and Bitcoin modules with disposable Tor
+transport, strict container isolation, and continuously tested dependencies.
 
-Available now:
+## Quick start
 
-- `monero/` — Monero CLI wallet with two Tor exits and HAProxy failover.
+Requirements: Docker Engine or Docker Desktop with Compose v2, and Bash.
 
-Planned:
-
-- `bitcoin/` — Bitcoin CLI wallet using the same transport model.
-
-## Quick Start
-
-Requirements:
-
-- Docker Engine or Docker Desktop;
-- Docker Compose v2;
-- Bash.
-
-Stable release archives are not published yet. Use the current `main` branch.
-
-With Git:
+Clone the repository and start the project menu:
 
 ```bash
-git clone https://github.com/m0nokey/mgla.git
-cd mgla
-bash run.sh
+git clone https://github.com/m0nokey/mgla.git \
+&& cd mgla \
+&& bash ./run.sh
 ```
 
 Without Git:
 
 ```bash
 install -d -m 0700 mgla \
-&& curl -fsSL https://github.com/m0nokey/mgla/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C mgla \
+&& curl -fsSL --proto '=https' 'https://github.com/m0nokey/mgla/archive/refs/heads/main.tar.gz' | tar -xz --strip-components=1 -C mgla \
 && cd mgla \
 && bash ./run.sh
 ```
 
-`run.sh` opens the project menu:
+`run.sh` is the normal entry point and opens the module menu:
 
 ```text
 mgla
 ------------------------------------------------------------
 1. Monero wallet
+2. Bitcoin wallet
 q. Exit
 ------------------------------------------------------------
 ```
 
-Select `1` to start the Monero scenario. By default it pulls the latest
-multi-architecture images from GHCR. If the packages are private, authenticate
-first with `docker login ghcr.io`.
-
-To build all images locally instead:
+The default mode pulls the latest published multi-architecture images from
+GHCR. To build the selected module locally instead:
 
 ```bash
-IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash run.sh
+IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash ./run.sh
 ```
 
-## Network Model
-
-The wallet is at the bottom and has no direct Internet route:
+The `main` branch publishes these images only after build, integration tests,
+and security scans succeed:
 
 ```text
-                         Monero onion daemon (.onion)
-                                      ▲
-                                      │ Tor network
-                         ┌────────────┴────────────┐
-                         │                         │
-                     exit-a                      exit-b
-                         ▲                         ▲
-                         └────────────┬────────────┘
-                                      │
-                       haproxy (Tor SOCKS relay)
-                                      ▲
-                                      │ internal_network only
-                                      │
-                                monero-cli
+ghcr.io/m0nokey/mgla-exit:latest
+ghcr.io/m0nokey/mgla-haproxy:latest
+ghcr.io/m0nokey/mgla-monero:latest
+ghcr.io/m0nokey/mgla-bitcoin:latest
 ```
 
-`mgla-monero` is attached only to Docker's internal network and has no direct
-Internet route. `mgla-haproxy` also has no external network attachment; its
-backend pool contains only the two Tor exit containers. The exit containers are
-the only services attached to the external bridge.
+## Modules
 
-Docker subnets and container addresses are generated at every launch and passed
-to Compose at runtime. They are not embedded in the published images.
+- `monero/` — Monero CLI wallet with fresh onion-daemon discovery and fixed-size encrypted `.mgla` vaults.
+- `bitcoin/` — Electrum CLI wallet with signed source verification and official onion-server discovery.
 
-## Wallet Storage
+Both modules use the same hardened Alpine Tor and HAProxy images. The module
+scripts are lifecycle controllers used by `run.sh`, CI, and direct development
+checks; `run.sh` remains the normal user entry point.
 
-Monero stores fixed-size encrypted vault files in the host directory
-`$HOME/.mgla/`. Each vault has a fixed image size of 128 MiB and can contain
-multiple named wallets:
+## Network model
+
+The route is shown from the wallet upward. The wallet container is at the
+bottom and has no direct Internet route:
+
+```text
+                         Monero daemon / Electrum server (.onion)
+                                           ▲
+                                           │ Tor network
+                         ┌─────────────────┴─────────────────┐
+                         │                                   │
+                       exit-a                              exit-b
+                         ▲                                   ▲
+                         └─────────────────┬─────────────────┘
+                                           │
+                              haproxy (SOCKS5 relay)
+                                           ▲
+                                           │ internal_network only
+                                           │
+                              monero-cli / bitcoin-cli
+```
+
+`monero-cli` and `bitcoin-cli` are attached only to Docker's `internal_network`.
+They expose no host ports and cannot bypass HAProxy. HAProxy is attached only
+to the internal network and reaches the Internet through the two independent
+Tor exits. The exits are the only services attached to the external bridge.
+
+Monero uses SOCKS5h for daemon discovery and RPC requests. Electrum uses a
+remote-DNS SOCKS5 connector for its `.onion` server connections. Docker
+subnets and service addresses are generated for each run by the launcher; no
+runtime network address is embedded in a published image.
+
+## Wallet data
+
+Monero vaults are stored on the host in `$HOME/.mgla/` by default:
 
 ```text
 $HOME/.mgla/
@@ -100,66 +104,71 @@ $HOME/.mgla/
 └── savings.mgla
 ```
 
-New vaults use the current fixed-size format and are exactly the requested size.
-Vault files created by older builds are not migrated automatically.
+A new vault is a fixed-size 128 MiB encrypted file and can contain multiple
+named Monero wallets. The vault is decrypted only into the Monero container's
+private tmpfs and is cleared when the session ends. The vault password is
+shown once when a vault is created; losing it means losing access to that
+vault. A Monero seed can recover the wallet, but not local labels or cache.
 
-At startup, the menu lists the existing `.mgla` files and allows you to open one
-or create a new vault. To use another host directory:
+Bitcoin Electrum wallet files are stored in `$HOME/.mgla/bitcoin/` by default
+and are bind-mounted only into the selected non-root Bitcoin container. Override
+the directory with `BITCOIN_WALLET_STORE_HOST_DIR=/absolute/path` when using
+the Bitcoin module.
 
-```bash
-WALLET_STORE_HOST_DIR=/absolute/path/to/.mgla bash run.sh
-```
+## Security and CI
 
-On first creation, the application generates a high-entropy vault password and
-shows it once. Save it offline: losing it means losing access to that vault.
-Wallet seed phrases can restore wallets, but they do not restore local wallet
-cache and labels. The host receives only encrypted vault files; wallets are
-opened inside the Monero container in a private tmpfs and removed when the
-launcher exits.
+The project's security objective is to make container and dependency security
+continuously testable and to reduce supply-chain and remote-code-execution
+(RCE) exposure. No scanner can prove that software has zero possible CVEs or
+RCEs, so findings remain visible even when they are not release blockers.
 
-The vault menu provides two unlock modes. `Prompt` asks for the vault password
-for every open and save and discards the derived key after each operation.
-`Session` asks once and keeps only the derived key in locked memory until the
-launcher exits. Communication with the Rust vault process uses a private Unix
-socket; the plaintext password is not kept in the Bash launcher. Normal exit
-packs dirty wallet data before erasing the session key. A forced kill or power
-loss can lose only changes not yet packed; the previous encrypted image stays
-intact.
+The CI pipeline performs:
 
-## Security Model
+- native `linux/amd64` and `linux/arm64` builds;
+- signed and hash-pinned upstream wallet verification;
+- direct-route blocking and Tor integration tests;
+- actionlint, ShellCheck, Compose, and Python validation;
+- Trivy Dockerfile/Compose misconfiguration scans;
+- Trivy OS and library scans for every final image;
+- SARIF upload to GitHub Code Scanning.
 
-The project uses:
+Validation jobs use read-only permissions. Only the separate publish job on
+`main` receives registry write permission. Pull requests and non-`main`
+pushes validate without publishing images. Scheduled rescans check the
+published `latest` images for newly disclosed vulnerabilities.
 
-- non-root, read-only containers with dropped capabilities;
-- isolated internal and external Docker networks;
-- two independent Tor exits with HAProxy health checks and failover;
-- an authenticated AES-256-XTS wallet vault using Argon2id and HMAC-SHA-256;
-- pinned Monero source revisions and targeted Alpine security updates;
-- native `linux/amd64` and `linux/arm64` CI builds;
-- vulnerability scanning of every final image before `latest` is published.
+Open the relevant workflow and select the newest completed run:
 
-The scans block known fixable critical and high findings. They reduce exposure,
-but do not prove that an image contains no unknown vulnerability or RCE.
+- [Monero workflow](https://github.com/m0nokey/mgla/actions/workflows/monero.yml)
+- [Bitcoin workflow](https://github.com/m0nokey/mgla/actions/workflows/bitcoin.yml)
 
-The [Monero CI workflow](https://github.com/m0nokey/mgla/actions/workflows/monero.yml)
-always opens the list of runs; the newest run is at the top. Open it and select
-Summary to see the per-image vulnerability table. The current Trivy v0.74.0
-run is [run #21](https://github.com/m0nokey/mgla/actions/runs/34936153962).
-Full reports for all severity levels are published in
-[GitHub Code scanning](https://github.com/m0nokey/mgla/security/code-scanning).
-Each run also provides downloadable SARIF artifacts for both architectures.
+The run **Summary** contains the per-image vulnerability table. Full SARIF
+results are available under **Security → Code scanning**, and each matrix
+job uploads an architecture-specific report artifact.
 
-## Project Layout
+## Project layout
 
 ```text
-run.sh                       Project launcher and wallet menu
-monero/
-├── monero-cli.sh            Monero lifecycle controller
-├── compose.yaml             Isolated four-service stack
-└── docker/
-    ├── exit/                Tor exit image, scripts and torrc template
-    ├── haproxy/             HAProxy image, scripts and config template
-    └── monero/              Monero CLI, Rust vault, and wallet launcher
+.
+├── README.md
+├── run.sh
+├── monero/
+│   ├── monero-cli.sh
+│   ├── compose.yaml
+│   ├── ci/security-summary.py
+│   └── docker/
+│       ├── exit/
+│       ├── haproxy/
+│       └── monero/
+└── bitcoin/
+    ├── bitcoin-cli.sh
+    ├── compose.yaml
+    ├── ci/security-summary.py
+    ├── requirements.lock
+    └── docker/bitcoin/
 ```
 
-See `monero/README.md` for module-specific details.
+See the module documentation for implementation details:
+
+- [Monero module](monero/README.md)
+- [Bitcoin module](bitcoin/README.md)

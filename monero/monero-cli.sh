@@ -99,10 +99,20 @@ rand_u8() {
 }
 
 docker_subnets() {
-    local ids
-    ids="$(docker network ls -q 2>/dev/null)" || return 0
-    [[ -z "${ids}" ]] && return 0
-    docker network inspect ${ids} \
+    local id
+    local -a ids=()
+
+    while IFS= read -r id; do
+        if [[ -n "${id}" ]]; then
+            ids+=("${id}")
+        fi
+    done < <(docker network ls -q 2>/dev/null || true)
+
+    if ((${#ids[@]} == 0)); then
+        return 0
+    fi
+
+    docker network inspect "${ids[@]}" \
         --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' 2>/dev/null \
         | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$' || true
 }

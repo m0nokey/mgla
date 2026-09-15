@@ -1,13 +1,20 @@
 # syntax=docker/dockerfile:1.7
 FROM alpine:3.24
 
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC
+
 RUN apk add --no-cache \
         ca-certificates \
+        tzdata \
         tor \
         nyx \
         xxd \
         procps-ng \
-        python3
+        python3 \
+    && cp /usr/share/zoneinfo/UTC /etc/localtime \
+    && printf '%s\n' UTC > /etc/timezone
 
 # Targeted CVE fixes: Alpine v3.24 aarch64 stable can lag; install only the
 # fixed expat and OpenSSL packages from the signed Alpine edge repository.

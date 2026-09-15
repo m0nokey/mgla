@@ -4,6 +4,10 @@ ARG ALPINE_VERSION=3.24
 
 FROM alpine:${ALPINE_VERSION} AS builder
 
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC
+
 ARG TARGETARCH
 ARG MONERO_VERSION=v0.18.5.1
 ARG MONERO_COMMIT=4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5
@@ -30,8 +34,11 @@ RUN apk add --no-cache \
         readline-dev \
         rust \
         samurai \
+        tzdata \
         unbound-dev \
-        zeromq-dev
+        zeromq-dev \
+    && cp /usr/share/zoneinfo/UTC /etc/localtime \
+    && printf '%s\n' UTC > /etc/timezone
 
 # Build against the fixed Alpine security revisions used by the runtime.
 RUN apk add --no-cache \
@@ -101,7 +108,10 @@ RUN --mount=type=cache,target=/ccache \
 
 FROM alpine:${ALPINE_VERSION}
 
-ENV HOME=/tmp/home
+ENV HOME=/tmp/home \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC
 
 ARG MONERO_VERSION=v0.18.5.1
 ARG MONERO_COMMIT=4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5
@@ -133,7 +143,9 @@ RUN apk add --no-cache \
         readline \
         tzdata \
         unbound-libs \
-        zeromq
+        zeromq \
+    && cp /usr/share/zoneinfo/UTC /etc/localtime \
+    && printf '%s\n' UTC > /etc/timezone
 
 RUN command -v stty
 
