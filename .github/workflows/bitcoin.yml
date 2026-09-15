@@ -96,9 +96,7 @@ jobs:
           docker compose --ansi never -f bitcoin/compose.yaml config --quiet
 
       - name: Compile Python helpers
-        run: python3 -m py_compile \
-          bitcoin/ci/security-summary.py \
-          bitcoin/docker/bitcoin/network-check.py
+        run: python3 -m py_compile bitcoin/ci/security-summary.py bitcoin/docker/bitcoin/network-check.py
 
       - name: Scan Docker and Compose configuration
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
