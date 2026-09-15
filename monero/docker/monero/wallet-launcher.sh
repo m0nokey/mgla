@@ -36,7 +36,9 @@ cleanup() {
     if declare -F stop_wallet_child >/dev/null 2>&1; then
         stop_wallet_child
     fi
-    if declare -F save_vault >/dev/null 2>&1 && [[ "${vault_loaded:-0}" -eq 1 ]] && [[ "$exit_code" -eq 0 ]]; then
+    # Persist dirty wallet data before clearing the temporary wallet root,
+    # including signal and error exits.
+    if declare -F save_vault >/dev/null 2>&1 && [[ "${vault_loaded:-0}" -eq 1 ]]; then
         save_vault || true
     fi
     if declare -F clear_wallet_root >/dev/null 2>&1; then
