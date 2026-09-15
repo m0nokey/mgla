@@ -107,7 +107,7 @@ services:
         MONERO_COMMIT: "${monero_commit}"
     init: true
     stop_signal: SIGTERM
-    stop_grace_period: 2s
+    stop_grace_period: 30s
     cap_drop: ["ALL"]
     read_only: true
     ipc: none
@@ -119,12 +119,16 @@ services:
     environment:
       HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
       HOME: /tmp/home
-      WALLET_HOST_DIR: "${wallet_host_dir}"
+      WALLET_VAULT_FILE: "/monero/vault-store/${wallet_vault_name}"
+      WALLET_VAULT_HOST_PATH: "${wallet_vault_host_path}"
+      WALLET_VAULT_NAME: "${wallet_vault_name}"
+      WALLET_VAULT_SIZE: "${wallet_vault_size}"
     tmpfs:
+      - /monero/wallets:rw,nosuid,nodev,noexec,mode=0700,uid=1000,gid=1000,size=${wallet_vault_size}
       - /tmp:rw,nosuid,nodev,noexec,mode=1777
       - /tmp/home:rw,nosuid,nodev,noexec,mode=0700,uid=1000,gid=1000
     volumes:
-      - "${wallet_host_dir}:/monero/wallets:rw"
+      - "${wallet_store_host_dir}:/monero/vault-store:rw"
     healthcheck:
       test: ["CMD", "/opt/monero/monero-wallet-cli", "--version"]
       interval: 30s

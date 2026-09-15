@@ -14,6 +14,7 @@ RUN apk add --no-cache \
         boost-dev \
         build-base \
         ca-certificates \
+        cargo \
         ccache \
         cmake \
         cppzmq \
@@ -27,6 +28,7 @@ RUN apk add --no-cache \
         pkgconf \
         rapidjson-dev \
         readline-dev \
+        rust \
         samurai \
         unbound-dev \
         zeromq-dev
@@ -51,8 +53,20 @@ RUN set -eux; \
         https://github.com/monero-project/monero.git /src/monero; \
     test "$(git -C /src/monero rev-parse HEAD)" = "${MONERO_COMMIT}"
 
-WORKDIR /src/monero
 ENV CCACHE_DIR=/ccache
+
+# Build the memory-safe userspace vault before the large Monero compilation so
+# changes to the wallet launcher do not invalidate this layer.
+WORKDIR /src/vault
+COPY vault/Cargo.toml vault/Cargo.lock ./
+COPY vault/src ./src
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    cargo test --release --locked \
+    && cargo build --release --locked \
+    && strip --strip-unneeded target/release/mgla-vault
+
+WORKDIR /src/monero
 
 # Alpine's official package builds Monero directly against maintained Alpine
 # libraries. Build only simplewallet; daemon, RPC, GUI, tests, and debug tools
@@ -134,14 +148,17 @@ RUN apk add --no-cache \
 RUN addgroup -g 1000 -S user \
     && adduser -S -D -H -u 1000 -G user -s /sbin/nologin user \
     && install -d -m 0755 -o root -g root /opt/app /opt/monero \
-    && install -d -m 0700 -o 1000 -g 1000 /monero/wallets /tmp/home
+    && install -d -m 0700 -o 1000 -g 1000 /monero/wallets /monero/vault-store /tmp/home
 
 COPY --from=builder /src/monero/build/release/bin/monero-wallet-cli /opt/monero/monero-wallet-cli
+COPY --from=builder /src/vault/target/release/mgla-vault /opt/monero/mgla-vault
 COPY wallet-launcher.sh /opt/app/monero
 
-RUN chmod 0755 /opt/app/monero /opt/monero/monero-wallet-cli \
+RUN chmod 0755 /opt/app/monero /opt/monero/monero-wallet-cli /opt/monero/mgla-vault \
     && ln -s /opt/monero/monero-wallet-cli /usr/local/bin/monero-wallet-cli \
-    && /opt/monero/monero-wallet-cli --version
+    && /opt/monero/monero-wallet-cli --version \
+    && ldd /opt/monero/mgla-vault \
+    && if ldd /opt/monero/mgla-vault | grep -q 'not found'; then exit 1; fi
 
 USER 1000:1000
 WORKDIR /opt/app

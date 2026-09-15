@@ -46,17 +46,25 @@ For CI, debugging, or direct module invocation:
 bash monero/monero-cli.sh
 ```
 
-Wallet files are mounted from the host. The default is:
+The host stores a single encrypted wallet vault with a default capacity of
+128 MB. The default file is:
 
 ```text
-$HOME/Downloads/Monero/wallets
+$HOME/Downloads/Monero/wallets.mgla
 ```
 
-Set an explicit absolute path when needed:
+Set an explicit host directory and vault filename when needed:
 
 ```bash
-WALLET_HOST_DIR=/absolute/path/to/monero/wallets bash run.sh
+WALLET_STORE_HOST_DIR=/absolute/path/to/Monero \
+WALLET_VAULT_NAME=portfolio.mgla bash run.sh
 ```
+
+The first launch generates a high-entropy password and displays it once. Save
+it offline; losing it means losing access to the vault. Seed phrases can
+restore wallets, but not local cache and labels. The vault is the only host
+bind mount. Wallet files are decrypted only inside `/monero/wallets`, a private
+tmpfs that is cleared when the launcher exits.
 
 The menu lets you open an existing wallet, create a new named wallet, restore a
 wallet from its seed, return to the wallet list, or exit. A daemon is selected
@@ -104,6 +112,7 @@ continuously testable and to reduce supply-chain and remote-code-execution
 - keep final images minimal and run services as non-root users;
 - pin Alpine security fixes and the Monero source revision;
 - build only the Monero CLI wallet and verify its architecture and runtime linkage;
+- build and test the memory-safe Rust vault in the disposable Alpine builder;
 - prevent the wallet from reaching the Internet outside the Tor path;
 - build both supported architectures and scan every final image in CI.
 
@@ -119,8 +128,12 @@ Alpine builder, following the dependency model maintained by Alpine's official
 `community/monero` APKBUILD. Only CMake's `simplewallet` target is requested;
 the daemon, RPC server, GUI, tests, and debug utilities are not built. The
 binary architecture and all runtime links are checked before the disposable
-builder stage is discarded. Trezor support is intentionally disabled in this
-minimal first version and can be added as a separate module option.
+builder stage is discarded. The Rust `mgla-vault` utility is tested in the same
+builder and uses system OpenSSL for AES-256-XTS, libsodium for Argon2id, and a
+separate HMAC-SHA-256 authentication tag. It stores no cleartext format header
+and never creates a block device or mount. Trezor support is intentionally
+disabled in this minimal first version and can be added as a separate module
+option.
 
 GitHub Actions builds `linux/amd64` and `linux/arm64` on native runners, runs
 the Tor and network integration checks, and scans all three final images for

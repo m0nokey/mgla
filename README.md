@@ -90,17 +90,26 @@ to Compose at runtime. They are not embedded in the published images.
 
 ## Wallet Storage
 
-Wallet files stay on the host. The default directory is:
+Monero stores one fixed-size encrypted vault on the host. Its default capacity
+is 128 MB. The default file is:
 
 ```text
-$HOME/Downloads/Monero/wallets
+$HOME/Downloads/Monero/wallets.mgla
 ```
 
-Use another absolute directory when needed:
+Choose another host directory or vault filename when needed:
 
 ```bash
-WALLET_HOST_DIR=/absolute/path/to/wallets bash run.sh
+WALLET_STORE_HOST_DIR=/absolute/path/to/Monero \
+WALLET_VAULT_NAME=portfolio.mgla bash run.sh
 ```
+
+On first launch, the application generates a high-entropy vault password and
+shows it once. Save it offline: losing it means losing access to the vault.
+Wallet seed phrases can restore wallets, but they do not restore local wallet
+cache and labels. The host receives only the encrypted vault file; wallets are
+opened inside the Monero container in a private tmpfs and removed when the
+launcher exits.
 
 ## Security Model
 
@@ -109,6 +118,7 @@ The project uses:
 - non-root, read-only containers with dropped capabilities;
 - isolated internal and external Docker networks;
 - two independent Tor exits with HAProxy health checks and failover;
+- an authenticated AES-256-XTS wallet vault using Argon2id and HMAC-SHA-256;
 - pinned Monero source revisions and targeted Alpine security updates;
 - native `linux/amd64` and `linux/arm64` CI builds;
 - vulnerability scanning of every final image before `latest` is published.
@@ -134,7 +144,7 @@ monero/
 └── docker/
     ├── exit/                Tor exit image, scripts and torrc template
     ├── haproxy/             HAProxy image, scripts and config template
-    └── monero/              Monero CLI source build and wallet launcher
+    └── monero/              Monero CLI, Rust vault, and wallet launcher
 ```
 
 See `monero/README.md` for module-specific details.

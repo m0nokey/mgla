@@ -25,7 +25,29 @@ restore_tty() {
     fi
 }
 
-cleanup() { restore_tty; }
+cleanup() {
+    local exit_code=$?
+
+    if [[ "${cleanup_done:-0}" -eq 1 ]]; then
+        return "${exit_code}"
+    fi
+    cleanup_done=1
+
+    if declare -F stop_wallet_child >/dev/null 2>&1; then
+        stop_wallet_child
+    fi
+    if declare -F save_vault >/dev/null 2>&1 && [[ "${vault_loaded:-0}" -eq 1 ]]; then
+        save_vault || true
+    fi
+    if declare -F clear_wallet_root >/dev/null 2>&1; then
+        clear_wallet_root
+    fi
+
+    vault_password=""
+    unset vault_password
+    restore_tty
+    return "${exit_code}"
+}
 
 stop_wallet_child() {
     local pid="${wallet_pid:-}"
@@ -70,9 +92,17 @@ trap on_sigterm TERM
 trap 'cleanup' EXIT
 
 wallet_pid=""
+cleanup_done=0
 socks_port="${socks_port:-9095}"
-wallet_root="${wallet_root:-/monero/wallets}"
-wallet_host_root="${WALLET_HOST_DIR:-${wallet_root}}"
+wallet_root="/monero/wallets"
+vault_binary="/opt/monero/mgla-vault"
+vault_file="${WALLET_VAULT_FILE:-/monero/vault-store/wallets.mgla}"
+vault_host_path="${WALLET_VAULT_HOST_PATH:-${vault_file}}"
+vault_size="${WALLET_VAULT_SIZE:-128M}"
+vault_password=""
+vault_loaded=0
+vault_dirty=0
+wallet_host_root="${vault_host_path}"
 daemon_mode="${daemon_mode:-untrusted}"
 
 if [[ -z "${HAPROXY_IP:-}" ]]; then
@@ -132,6 +162,137 @@ pause_or_enter() {
     else
         sleep 4
     fi
+}
+
+# ---- encrypted wallet vault lifecycle ----
+
+vault_with_password() {
+    local password_fd
+    local result
+
+    [[ -n "${vault_password:-}" ]] || {
+        tty_print "error: vault password is not available"
+        return 1
+    }
+
+    exec {password_fd}<<<"${vault_password}"
+    if "${vault_binary}" --password-fd "${password_fd}" "$@" >/dev/null 2>&1; then
+        result=0
+    else
+        result=$?
+    fi
+    exec {password_fd}<&-
+    return "${result}"
+}
+
+read_vault_password() {
+    vault_password=""
+    tty_printf "Vault password: "
+    if ! IFS= read -r -s vault_password < /dev/tty; then
+        vault_password=""
+        tty_blank
+        return 1
+    fi
+    tty_blank
+    [[ -n "${vault_password}" ]]
+}
+
+generate_vault_password() {
+    vault_password="$(openssl rand -hex 23 | tr -d '\n')"
+    [[ "${#vault_password}" -eq 46 ]]
+}
+
+clear_wallet_root() {
+    [[ "${wallet_root}" == "/monero/wallets" ]] || return 1
+    [[ -d "${wallet_root}" ]] || return 0
+    find "${wallet_root}" -mindepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+}
+
+save_vault() {
+    [[ "${vault_loaded}" -eq 1 && "${vault_dirty}" -eq 1 ]] || return 0
+
+    tty_print "Saving encrypted wallet vault..."
+    if vault_with_password pack "${vault_file}" "${wallet_root}"; then
+        vault_dirty=0
+        tty_print "[ok] encrypted wallet vault saved"
+        return 0
+    fi
+
+    tty_print "[error] failed to save encrypted wallet vault"
+    return 1
+}
+
+open_or_create_vault() {
+    if [[ ! -x "${vault_binary}" ]]; then
+        tty_print "error: vault binary is missing"
+        return 1
+    fi
+    if ! mkdir -p -m 700 "${wallet_root}" 2>/dev/null; then
+        tty_print "error: cannot access temporary wallet directory"
+        return 1
+    fi
+
+    if [[ -e "${vault_file}" ]]; then
+        while true; do
+            clear_screen
+            tty_print "Open encrypted wallet vault"
+            tty_print "------------------------------------------------------------"
+            tty_print "Vault file: ${vault_host_root}"
+            tty_blank
+            if ! read_vault_password; then
+                return 1
+            fi
+            if vault_with_password unpack "${vault_file}" "${wallet_root}"; then
+                vault_loaded=1
+                vault_dirty=0
+                tty_print "[ok] encrypted wallet vault opened"
+                return 0
+            fi
+
+            vault_password=""
+            clear_wallet_root
+            tty_print "error: wrong password or damaged vault"
+            tty_blank
+            choice="$(read_choice "Press Enter to try again, or x to exit: ")"
+            [[ "${choice}" =~ ^[xX]$ ]] && return 1
+        done
+    fi
+
+    clear_screen
+    tty_print "Create encrypted wallet vault"
+    tty_print "------------------------------------------------------------"
+    tty_print "No vault found at: ${vault_host_root}"
+    tty_print "A fixed-size ${vault_size} vault will be created."
+    tty_blank
+    tty_print "A random password will be shown once. Save it offline."
+    tty_print "If it is lost, the vault cannot be opened again."
+    tty_print "Wallet seed phrases can restore wallets, but not local wallet data."
+    tty_blank
+
+    if ! generate_vault_password; then
+        tty_print "error: cannot generate vault password"
+        return 1
+    fi
+    tty_print "Vault password (save it now):"
+    tty_print "${vault_password}"
+    tty_blank
+    choice="$(read_choice "I saved the password. Continue? [y/N]: ")"
+    if [[ ! "${choice}" =~ ^[yY]$ ]]; then
+        vault_password=""
+        tty_print "Vault creation cancelled."
+        return 1
+    fi
+
+    if ! vault_with_password create "${vault_file}" "${vault_size}" "${wallet_root}"; then
+        vault_password=""
+        tty_print "error: failed to create encrypted wallet vault"
+        return 1
+    fi
+
+    vault_loaded=1
+    vault_dirty=0
+    tty_print "[ok] encrypted wallet vault created"
+    pause_or_enter
 }
 _xmr_nodes_raw() {
     local json=""
@@ -596,7 +757,7 @@ choose_existing_wallet() {
         clear_screen
         tty_print "Open existing wallet"
         tty_print "------------------------------------------------------------"
-        tty_print "Wallet directory: ${wallet_host_root}"
+        tty_print "Wallet vault: ${wallet_host_root}"
         tty_blank
 
         if (( ${#names[@]} == 0 )); then
@@ -673,6 +834,7 @@ create_wallet() {
     fi
 
     clear_screen
+    vault_dirty=1
     if run_wallet_cli_tty --generate-new-wallet "${wallet_file}"; then
         rc=0
     else
@@ -681,6 +843,10 @@ create_wallet() {
 
     if [[ "${rc}" -eq 0 && -f "${wallet_file}" && -f "${wallet_keys}" ]]; then
         tty_print "wallet created: ${wallet_name}"
+        if ! save_vault; then
+            pause_or_enter
+            return 1
+        fi
         pause_or_enter
         return 0
     fi
@@ -705,6 +871,7 @@ restore_wallet() {
 
         if [[ "${mode}" == "ZERO" ]]; then
             clear_screen
+            vault_dirty=1
             if run_wallet_cli_tty \
                 --restore-deterministic-wallet \
                 --restore-height "0" \
@@ -715,6 +882,10 @@ restore_wallet() {
             fi
             if [[ "${rc}" -eq 0 ]]; then
                 tty_print "wallet restored: ${wallet_name}"
+                if ! save_vault; then
+                    pause_or_enter
+                    return 1
+                fi
                 pause_or_enter
                 return 0
             fi
@@ -732,6 +903,7 @@ restore_wallet() {
             [[ -n "${restore_height:-}" ]] || continue
 
             clear_screen
+            vault_dirty=1
             if run_wallet_cli_tty \
                 --restore-deterministic-wallet \
                 --restore-height "${restore_height}" \
@@ -742,6 +914,10 @@ restore_wallet() {
             fi
             if [[ "${rc}" -eq 0 ]]; then
                 tty_print "wallet restored: ${wallet_name}"
+                if ! save_vault; then
+                    pause_or_enter
+                    return 1
+                fi
                 pause_or_enter
                 return 0
             fi
@@ -769,6 +945,7 @@ restore_wallet() {
             fi
 
             clear_screen
+            vault_dirty=1
             if run_wallet_cli_tty \
                 --restore-deterministic-wallet \
                 --restore-height "${restore_height}" \
@@ -779,6 +956,10 @@ restore_wallet() {
             fi
             if [[ "${rc}" -eq 0 ]]; then
                 tty_print "wallet restored: ${wallet_name}"
+                if ! save_vault; then
+                    pause_or_enter
+                    return 1
+                fi
                 pause_or_enter
                 return 0
             fi
@@ -801,6 +982,7 @@ run_selected_wallet() {
         tty_blank
 
         set +e
+        vault_dirty=1
         run_wallet_process --wallet-file "${wallet_file}" "$@"
         rc=$?
         set -e
@@ -829,7 +1011,11 @@ if ! tty_ok; then
 fi
 
 if ! mkdir -p "${wallet_root}" 2>/dev/null; then
-    tty_print "error: cannot access wallet directory: ${wallet_host_root}"
+    tty_print "error: cannot access temporary wallet directory"
+    exit 1
+fi
+if ! open_or_create_vault; then
+    clear_wallet_root
     exit 1
 fi
 
@@ -837,7 +1023,7 @@ while true; do
     clear_screen
     tty_print "Monero wallet launcher"
     tty_print "------------------------------------------------------------"
-    tty_print "Wallet directory: ${wallet_host_root}"
+    tty_print "Wallet vault: ${wallet_host_root}"
     tty_blank
     tty_print "Choose action:"
     tty_print "1. Open existing wallet"
@@ -859,10 +1045,15 @@ while true; do
 
         if select_daemon; then
             if run_selected_wallet "$@"; then
-                :
+                if ! save_vault; then
+                    pause_or_enter
+                fi
             else
                 rc=$?
                 tty_print "wallet session ended with code ${rc}"
+                if ! save_vault; then
+                    pause_or_enter
+                fi
                 pause_or_enter
             fi
         else
