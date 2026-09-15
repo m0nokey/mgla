@@ -7,6 +7,7 @@ on:
       - "monero/ci/**"
       - "monero/compose.yaml"
       - "monero/monero-cli.sh"
+      - "run.sh"
       - ".github/workflows/monero.yml"
   pull_request:
     paths:
@@ -14,6 +15,7 @@ on:
       - "monero/ci/**"
       - "monero/compose.yaml"
       - "monero/monero-cli.sh"
+      - "run.sh"
       - ".github/workflows/monero.yml"
   schedule:
     - cron: "17 3 * * *"
