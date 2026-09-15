@@ -36,15 +36,13 @@ cleanup() {
     if declare -F stop_wallet_child >/dev/null 2>&1; then
         stop_wallet_child
     fi
-    if declare -F save_vault >/dev/null 2>&1 && [[ "${vault_loaded:-0}" -eq 1 ]]; then
+    if declare -F save_vault >/dev/null 2>&1 && [[ "${vault_loaded:-0}" -eq 1 ]] && [[ "$exit_code" -eq 0 ]]; then
         save_vault || true
     fi
     if declare -F clear_wallet_root >/dev/null 2>&1; then
         clear_wallet_root
     fi
 
-    vault_password=""
-    unset vault_password
     restore_tty
     return "${exit_code}"
 }
@@ -102,7 +100,6 @@ vault_size="${WALLET_VAULT_SIZE:-128M}"
 vault_name=""
 vault_file=""
 vault_host_path=""
-vault_password=""
 vault_loaded=0
 vault_dirty=0
 daemon_mode="${daemon_mode:-untrusted}"
@@ -168,40 +165,8 @@ pause_or_enter() {
 
 # ---- encrypted wallet vault lifecycle ----
 
-vault_with_password() {
-    local password_fd
-    local result
-
-    [[ -n "${vault_password:-}" ]] || {
-        tty_print "error: vault password is not available"
-        return 1
-    }
-
-    exec {password_fd}<<<"${vault_password}"
-    if "${vault_binary}" --password-fd "${password_fd}" "$@" >/dev/null 2>&1; then
-        result=0
-    else
-        result=$?
-    fi
-    exec {password_fd}<&-
-    return "${result}"
-}
-
-read_vault_password() {
-    vault_password=""
-    tty_printf "Vault password: "
-    if ! IFS= read -r -s vault_password < /dev/tty; then
-        vault_password=""
-        tty_blank
-        return 1
-    fi
-    tty_blank
-    [[ -n "${vault_password}" ]]
-}
-
-generate_vault_password() {
-    vault_password="$(openssl rand -hex 23 | tr -d '\n')"
-    [[ "${#vault_password}" -eq 46 ]]
+vault_with_tty_password() {
+    "$vault_binary" --tty-password "$@"
 }
 
 clear_wallet_root() {
@@ -214,7 +179,7 @@ save_vault() {
     [[ "${vault_loaded}" -eq 1 && "${vault_dirty}" -eq 1 ]] || return 0
 
     tty_print "Saving encrypted wallet vault..."
-    if vault_with_password pack "${vault_file}" "${wallet_root}"; then
+    if vault_with_tty_password pack "${vault_file}" "${wallet_root}"; then
         vault_dirty=0
         tty_print "[ok] encrypted wallet vault saved"
         return 0
@@ -357,17 +322,13 @@ open_or_create_vault() {
             tty_print "------------------------------------------------------------"
             tty_print "Vault file: ${vault_host_path}"
             tty_blank
-            if ! read_vault_password; then
-                return 1
-            fi
-            if vault_with_password unpack "${vault_file}" "${wallet_root}"; then
+            if vault_with_tty_password unpack "${vault_file}" "${wallet_root}"; then
                 vault_loaded=1
                 vault_dirty=0
                 tty_print "[ok] encrypted wallet vault opened"
                 return 0
             fi
 
-            vault_password=""
             clear_wallet_root
             tty_print "error: wrong password or damaged vault"
             tty_blank
@@ -387,30 +348,20 @@ open_or_create_vault() {
     tty_print "Wallet seed phrases can restore wallets, but not local wallet data."
     tty_blank
 
-    if ! generate_vault_password; then
-        tty_print "error: cannot generate vault password"
-        return 1
-    fi
-    tty_print "Vault password (save it now):"
-    tty_print "${vault_password}"
-    tty_blank
-    choice="$(read_choice "I saved the password. Continue? [y/N]: ")"
-    if [[ ! "${choice}" =~ ^[yY]$ ]]; then
-        vault_password=""
-        tty_print "Vault creation cancelled."
-        return 1
-    fi
-
-    if ! vault_with_password create "${vault_file}" "${vault_size}" "${wallet_root}"; then
-        vault_password=""
+    if "$vault_binary" create-generated "$vault_file" "$vault_size" "$wallet_root"; then
+        vault_loaded=1
+        vault_dirty=0
+        tty_print "[ok] encrypted wallet vault created"
+        pause_or_enter
+        return 0
+    else
+        rc=$?
+        if [[ "$rc" -eq 2 ]]; then
+            return 1
+        fi
         tty_print "error: failed to create encrypted wallet vault"
         return 1
     fi
-
-    vault_loaded=1
-    vault_dirty=0
-    tty_print "[ok] encrypted wallet vault created"
-    pause_or_enter
 }
 
 _xmr_nodes_raw() {

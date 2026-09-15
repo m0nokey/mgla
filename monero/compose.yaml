@@ -2,6 +2,8 @@ services:
   exit_a:
     container_name: ${exit_a_container}
     image: ${exit_image:-mgla-exit:latest}
+    logging:
+      driver: "none"
     build:
       context: ./docker/exit
       dockerfile: Dockerfile
@@ -36,6 +38,8 @@ services:
   exit_b:
     container_name: ${exit_b_container}
     image: ${exit_image:-mgla-exit:latest}
+    logging:
+      driver: "none"
     init: true
     stop_signal: SIGTERM
     stop_grace_period: 5s
@@ -67,6 +71,8 @@ services:
   haproxy:
     container_name: ${haproxy_container}
     image: ${haproxy_image:-mgla-haproxy:latest}
+    logging:
+      driver: "none"
     build:
       context: ./docker/haproxy
       dockerfile: Dockerfile
@@ -99,6 +105,8 @@ services:
   monero:
     container_name: ${monero_container}
     image: ${monero_image:-mgla-monero:latest}
+    logging:
+      driver: "none"
     build:
       context: ./docker/monero
       dockerfile: Dockerfile
@@ -112,7 +120,7 @@ services:
     read_only: true
     ipc: none
     pids_limit: 128
-    mem_limit: 512m
+    mem_limit: 2g
     cpus: "1.0"
     security_opt:
       - no-new-privileges:true

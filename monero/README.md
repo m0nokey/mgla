@@ -66,7 +66,9 @@ The first launch generates a high-entropy password and displays it once. Save
 it offline; losing it means losing access to that vault. Seed phrases can
 restore wallets, but not local cache and labels. The vault directory is the
 only host bind mount. Wallet files are decrypted only inside `/monero/wallets`, a private
-tmpfs that is cleared when the launcher exits.
+tmpfs that is cleared when the launcher exits. The Rust vault process generates
+and prompts for vault passwords directly through `/dev/tty`; the Bash
+launcher does not retain them between vault operations.
 
 The menu lets you open an existing wallet, create a new named wallet, restore a
 wallet from its seed, return to the wallet list, or exit. A daemon is selected

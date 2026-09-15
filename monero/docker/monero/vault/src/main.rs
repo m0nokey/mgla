@@ -9,6 +9,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::fd::FromRawFd;
 use std::os::raw::{c_char, c_int};
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 use subtle::ConstantTimeEq;
 use tar::{Archive, Builder};
 use tempfile::tempfile;
@@ -19,18 +20,31 @@ type VaultResult<T> = Result<T, Box<dyn Error>>;
 
 const SECTOR_SIZE: usize = 4096;
 const TAG_SIZE: usize = 32;
+const SALT_SIZE: usize = 16;
 const INNER_HEADER_SIZE: usize = 64;
 const XTS_KEY_SIZE: usize = 64;
 const MAC_KEY_SIZE: usize = 32;
 const KEY_MATERIAL_SIZE: usize = XTS_KEY_SIZE + MAC_KEY_SIZE;
 const PASSWORD_MAX: usize = 512;
 const MAX_DATA_SIZE: u64 = 16 * 1024 * 1024 * 1024;
-const ARGON2ID_OPSLIMIT: u64 = 3;
-const ARGON2ID_MEMLIMIT: usize = 64 * 1024 * 1024;
+const ARGON2ID_OPSLIMIT_V1: u64 = 3;
+const ARGON2ID_MEMLIMIT_V1: usize = 64 * 1024 * 1024;
+const ARGON2ID_OPSLIMIT_V2: u64 = 4;
+const ARGON2ID_MEMLIMIT_V2: usize = 1024 * 1024 * 1024;
 const ARGON2ID_ALGORITHM: c_int = 2;
-const KDF_SALT: [u8; 16] = *b"mgla-raw-v1-kdf!";
-const HMAC_CONTEXT: &[u8] = b"MGLA-RAW-V1-HMAC";
+const LEGACY_KDF_SALT: [u8; SALT_SIZE] = *b"mgla-raw-v1-kdf!";
+const GENERATED_PASSWORD_CORE_LENGTH: usize = 47;
+const GENERATED_PASSWORD_LENGTH: usize = GENERATED_PASSWORD_CORE_LENGTH + 1;
+const GENERATED_PASSWORD_MIN_SPECIALS: usize = 7;
+const GENERATED_PASSWORD_LETTERS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const GENERATED_PASSWORD_ALPHABET: &[u8] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789<>*+!?_=#@%&";
+const GENERATED_PASSWORD_SPECIALS: &[u8] = b"<>*+!?_=#@%&";
+const HMAC_CONTEXT_V1: &[u8] = b"MGLA-RAW-V1-HMAC";
+const HMAC_CONTEXT_V2: &[u8] = b"MGLA-RAW-V2-HMAC";
 const INNER_MAGIC: &[u8] = b"MGLA-RAW-V1";
+const FORMAT_VERSION_V1: u32 = 1;
+const FORMAT_VERSION_V2: u32 = 2;
 
 #[link(name = "sodium")]
 unsafe extern "C" {
@@ -61,16 +75,14 @@ fn invalid_data(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
-fn fixed_data_size(data_size: u64) -> VaultResult<u64> {
+fn validate_data_size(data_size: u64) -> VaultResult<u64> {
     if data_size < SECTOR_SIZE as u64
         || data_size > MAX_DATA_SIZE
-        || data_size % SECTOR_SIZE as u64 != 0
+        || !data_size.is_multiple_of(SECTOR_SIZE as u64)
     {
         return Err(invalid("vault size must be a sector-aligned value between 4K and 16G").into());
     }
-    data_size
-        .checked_add(TAG_SIZE as u64)
-        .ok_or_else(|| invalid("vault size is too large").into())
+    Ok(data_size)
 }
 
 fn parse_size(text: &str) -> VaultResult<u64> {
@@ -90,65 +102,151 @@ fn parse_size(text: &str) -> VaultResult<u64> {
     let data_size = value
         .checked_mul(multiplier)
         .ok_or_else(|| invalid("vault size is too large"))?;
-    if data_size < SECTOR_SIZE as u64
-        || data_size > MAX_DATA_SIZE
-        || data_size % SECTOR_SIZE as u64 != 0
-    {
-        return Err(invalid("vault size must be a sector-aligned value between 4K and 16G").into());
-    }
-    Ok(data_size)
+    validate_data_size(data_size)
 }
 
-fn image_data_size(image_size: u64) -> VaultResult<u64> {
-    if image_size <= TAG_SIZE as u64 {
-        return Err(invalid_data("vault file is too small").into());
-    }
-    let data_size = image_size - TAG_SIZE as u64;
-    fixed_data_size(data_size).map_err(|_| invalid_data("vault file has an invalid size"))?;
-    Ok(data_size)
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VaultFormat {
+    LegacyV1,
+    CurrentV2,
 }
 
-fn inspect_image(path: &Path) -> VaultResult<(u64, u64)> {
+impl VaultFormat {
+    fn version(self) -> u32 {
+        match self {
+            Self::LegacyV1 => FORMAT_VERSION_V1,
+            Self::CurrentV2 => FORMAT_VERSION_V2,
+        }
+    }
+
+    fn hmac_context(self) -> &'static [u8] {
+        match self {
+            Self::LegacyV1 => HMAC_CONTEXT_V1,
+            Self::CurrentV2 => HMAC_CONTEXT_V2,
+        }
+    }
+
+    fn kdf_parameters(self) -> (u64, usize) {
+        match self {
+            Self::LegacyV1 => (ARGON2ID_OPSLIMIT_V1, ARGON2ID_MEMLIMIT_V1),
+            Self::CurrentV2 => (ARGON2ID_OPSLIMIT_V2, ARGON2ID_MEMLIMIT_V2),
+        }
+    }
+
+    fn has_clear_salt(self) -> bool {
+        matches!(self, Self::CurrentV2)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct VaultLayout {
+    format: VaultFormat,
+    image_size: u64,
+    data_size: u64,
+    data_offset: u64,
+    salt: [u8; SALT_SIZE],
+}
+
+impl VaultLayout {
+    fn current(data_size: u64) -> VaultResult<Self> {
+        validate_data_size(data_size)?;
+        let image_size = data_size
+            .checked_add((SALT_SIZE + TAG_SIZE) as u64)
+            .ok_or_else(|| invalid("vault size is too large"))?;
+        let mut salt = [0u8; SALT_SIZE];
+        rand_bytes(&mut salt)?;
+        Ok(Self {
+            format: VaultFormat::CurrentV2,
+            image_size,
+            data_size,
+            data_offset: SALT_SIZE as u64,
+            salt,
+        })
+    }
+
+    fn legacy(image_size: u64, data_size: u64) -> Self {
+        Self {
+            format: VaultFormat::LegacyV1,
+            image_size,
+            data_size,
+            data_offset: 0,
+            salt: LEGACY_KDF_SALT,
+        }
+    }
+}
+
+fn inspect_image(path: &Path) -> VaultResult<VaultLayout> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file() {
         return Err(invalid_data("vault path is not a regular file").into());
     }
     let image_size = metadata.len();
-    Ok((image_size, image_data_size(image_size)?))
+    let current_overhead = (SALT_SIZE + TAG_SIZE) as u64;
+    if image_size >= current_overhead + SECTOR_SIZE as u64
+        && (image_size - current_overhead).is_multiple_of(SECTOR_SIZE as u64)
+    {
+        let data_size = image_size - current_overhead;
+        validate_data_size(data_size)
+            .map_err(|_| invalid_data("vault file has an invalid size"))?;
+        let mut file = File::open(path)?;
+        let mut salt = [0u8; SALT_SIZE];
+        file.read_exact(&mut salt)?;
+        return Ok(VaultLayout {
+            format: VaultFormat::CurrentV2,
+            image_size,
+            data_size,
+            data_offset: SALT_SIZE as u64,
+            salt,
+        });
+    }
+
+    let legacy_overhead = TAG_SIZE as u64;
+    if image_size >= legacy_overhead + SECTOR_SIZE as u64
+        && (image_size - legacy_overhead).is_multiple_of(SECTOR_SIZE as u64)
+    {
+        let data_size = image_size - legacy_overhead;
+        validate_data_size(data_size)
+            .map_err(|_| invalid_data("vault file has an invalid size"))?;
+        return Ok(VaultLayout::legacy(image_size, data_size));
+    }
+
+    Err(invalid_data("vault file has an invalid size").into())
 }
 
-fn read_password(fd: i32) -> VaultResult<Vec<u8>> {
+fn read_password(fd: i32) -> VaultResult<Zeroizing<Vec<u8>>> {
     if fd < 0 {
         return Err(invalid("--password-fd is required").into());
     }
 
     let input = unsafe { File::from_raw_fd(fd) };
-    let mut password = Vec::with_capacity(PASSWORD_MAX);
+    let mut password = Zeroizing::new(Vec::with_capacity(PASSWORD_MAX));
     input
         .take((PASSWORD_MAX + 2) as u64)
         .read_to_end(&mut password)?;
     if password.len() > PASSWORD_MAX + 1 {
-        password.zeroize();
         return Err(invalid("password is too long").into());
     }
+
     while matches!(password.last(), Some(b'\n' | b'\r')) {
         password.pop();
     }
+
     if password.is_empty() {
         return Err(invalid("password cannot be empty").into());
     }
     if password.len() > PASSWORD_MAX || password.contains(&0) {
-        password.zeroize();
         return Err(invalid("password is invalid").into());
     }
+
     Ok(password)
 }
 
-fn derive_keys(password: &[u8]) -> VaultResult<Keys> {
+fn derive_keys(password: &[u8], layout: &VaultLayout) -> VaultResult<Keys> {
     if password.is_empty() || password.len() > PASSWORD_MAX {
         return Err(invalid("password length is invalid").into());
     }
 
+    let (opslimit, memlimit) = layout.format.kdf_parameters();
     let mut material = [0u8; KEY_MATERIAL_SIZE];
     let result = unsafe {
         crypto_pwhash(
@@ -156,15 +254,15 @@ fn derive_keys(password: &[u8]) -> VaultResult<Keys> {
             material.len() as u64,
             password.as_ptr() as *const c_char,
             password.len() as u64,
-            KDF_SALT.as_ptr(),
-            ARGON2ID_OPSLIMIT,
-            ARGON2ID_MEMLIMIT,
+            layout.salt.as_ptr(),
+            opslimit,
+            memlimit,
             ARGON2ID_ALGORITHM,
         )
     };
     if result != 0 {
         material.zeroize();
-        return Err(io::Error::new(io::ErrorKind::Other, "Argon2id key derivation failed").into());
+        return Err(io::Error::other("Argon2id key derivation failed").into());
     }
 
     let mut xts = [0u8; XTS_KEY_SIZE];
@@ -175,11 +273,14 @@ fn derive_keys(password: &[u8]) -> VaultResult<Keys> {
     Ok(Keys { xts, mac })
 }
 
-fn new_mac(key: &[u8; MAC_KEY_SIZE], image_size: u64) -> VaultResult<HmacSha256> {
-    let mut mac = HmacSha256::new_from_slice(key)
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "cannot initialize HMAC"))?;
-    mac.update(HMAC_CONTEXT);
-    mac.update(&image_size.to_le_bytes());
+fn new_mac(key: &[u8; MAC_KEY_SIZE], layout: &VaultLayout) -> VaultResult<HmacSha256> {
+    let mut mac =
+        HmacSha256::new_from_slice(key).map_err(|_| io::Error::other("cannot initialize HMAC"))?;
+    mac.update(layout.format.hmac_context());
+    mac.update(&layout.image_size.to_le_bytes());
+    if layout.format.has_clear_salt() {
+        mac.update(&layout.salt);
+    }
     Ok(mac)
 }
 
@@ -301,6 +402,122 @@ fn random_suffix() -> VaultResult<String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+fn random_u32() -> VaultResult<u32> {
+    let mut bytes = [0u8; std::mem::size_of::<u32>()];
+    rand_bytes(&mut bytes)?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+fn random_range(min: usize, max: usize) -> VaultResult<usize> {
+    if min >= max {
+        return Err(invalid("random range is invalid").into());
+    }
+
+    let range = max
+        .checked_sub(min)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| invalid("random range is too large"))?;
+    let range = u64::try_from(range)?;
+    let sample_space = 1u64 << u32::BITS;
+    if range > sample_space {
+        return Err(invalid("random range is too large").into());
+    }
+
+    let limit = (sample_space / range) * range - 1;
+    loop {
+        let value = u64::from(random_u32()?);
+        if value <= limit {
+            return Ok((value % range) as usize + min);
+        }
+    }
+}
+
+fn random_character(alphabet: &[u8]) -> VaultResult<u8> {
+    if alphabet.len() < 2 {
+        return Err(invalid("random alphabet is too short").into());
+    }
+
+    let index = random_range(0, alphabet.len() - 1)?;
+    Ok(alphabet[index])
+}
+
+fn permute_middle(password: &mut [u8]) -> VaultResult<()> {
+    if password.len() < 2 {
+        return Ok(());
+    }
+
+    let mut index = password.len() - 1;
+    while index > 0 {
+        let random_index = random_range(0, index)?;
+        password.swap(index, random_index);
+        index -= 1;
+    }
+
+    Ok(())
+}
+
+fn generate_vault_password() -> VaultResult<Zeroizing<Vec<u8>>> {
+    let mut used = [false; 256];
+    let mut used_special = [false; 256];
+    let first = random_character(GENERATED_PASSWORD_LETTERS)?;
+    let mut password = Zeroizing::new(vec![first]);
+    let mut special_count = 0usize;
+
+    used[first as usize] = true;
+
+    while password.len() < GENERATED_PASSWORD_CORE_LENGTH
+        || special_count < GENERATED_PASSWORD_MIN_SPECIALS
+    {
+        let character = random_character(GENERATED_PASSWORD_ALPHABET)?;
+        let character_index = character as usize;
+
+        if used[character_index] {
+            continue;
+        }
+
+        used[character_index] = true;
+        if GENERATED_PASSWORD_SPECIALS.contains(&character) && !used_special[character_index] {
+            used_special[character_index] = true;
+            special_count += 1;
+        }
+
+        password.push(character);
+        if password.len() == GENERATED_PASSWORD_CORE_LENGTH
+            && special_count < GENERATED_PASSWORD_MIN_SPECIALS
+        {
+            password.as_mut_slice().zeroize();
+            password.clear();
+            used = [false; 256];
+            used_special = [false; 256];
+            used[first as usize] = true;
+            special_count = 0;
+            password.push(first);
+        }
+    }
+
+    let last = loop {
+        let character = random_character(GENERATED_PASSWORD_LETTERS)?;
+        if !used[character as usize] {
+            break character;
+        }
+    };
+    password.push(last);
+
+    let middle_end = password.len() - 1;
+    for _ in 0..5 {
+        let password_slice = password.as_mut_slice();
+        permute_middle(&mut password_slice[1..middle_end])?;
+    }
+
+    if password.len() != GENERATED_PASSWORD_LENGTH
+        || special_count < GENERATED_PASSWORD_MIN_SPECIALS
+    {
+        return Err(invalid("generated password does not match policy").into());
+    }
+
+    Ok(password)
+}
+
 fn temporary_image_path(image: &Path) -> VaultResult<(PathBuf, File)> {
     let parent = image
         .parent()
@@ -358,11 +575,11 @@ fn install_image(temp_path: &Path, image: &Path, create_new: bool) -> VaultResul
     sync_parent(image)
 }
 
-fn create_inner_header(archive_size: u64) -> VaultResult<[u8; INNER_HEADER_SIZE]> {
+fn create_inner_header(archive_size: u64, version: u32) -> VaultResult<[u8; INNER_HEADER_SIZE]> {
     let mut header = [0u8; INNER_HEADER_SIZE];
     rand_bytes(&mut header[32..])?;
     header[..INNER_MAGIC.len()].copy_from_slice(INNER_MAGIC);
-    header[16..20].copy_from_slice(&1u32.to_le_bytes());
+    header[16..20].copy_from_slice(&version.to_le_bytes());
     header[20..24].copy_from_slice(&(SECTOR_SIZE as u32).to_le_bytes());
     header[24..32].copy_from_slice(&archive_size.to_le_bytes());
     Ok(header)
@@ -372,19 +589,22 @@ fn pack_image(
     image: &Path,
     data_size: u64,
     source: &Path,
+    layout: &VaultLayout,
     keys: &Keys,
     create_new: bool,
 ) -> VaultResult<()> {
     if create_new && fs::symlink_metadata(image).is_ok() {
         return Err(io::Error::new(io::ErrorKind::AlreadyExists, "vault already exists").into());
     }
-    let image_size = fixed_data_size(data_size)?;
+    validate_data_size(data_size)?;
+    if layout.data_size != data_size {
+        return Err(invalid("vault layout and data size do not match").into());
+    }
     if !create_new {
-        let (existing_size, existing_data_size) = inspect_image(image)?;
-        if existing_data_size != data_size {
+        let existing = inspect_image(image)?;
+        if existing.data_size != data_size {
             return Err(invalid("vault size cannot change during pack").into());
         }
-        let _ = existing_size;
     }
 
     let maximum_archive_size = data_size
@@ -394,7 +614,10 @@ fn pack_image(
     let archive_size = archive.metadata()?.len();
     let (temporary_path, mut output) = temporary_image_path(image)?;
     let result = (|| -> VaultResult<()> {
-        let mut mac = new_mac(&keys.mac, image_size)?;
+        let mut mac = new_mac(&keys.mac, layout)?;
+        if layout.format.has_clear_salt() {
+            output.write_all(&layout.salt)?;
+        }
         let sector_count = data_size / SECTOR_SIZE as u64;
         let mut archive_remaining = archive_size;
         let mut plaintext = Zeroizing::new([0u8; SECTOR_SIZE]);
@@ -403,7 +626,8 @@ fn pack_image(
             rand_bytes(&mut plaintext[..])?;
             let offset = if sector == 0 { INNER_HEADER_SIZE } else { 0 };
             if sector == 0 {
-                plaintext[..INNER_HEADER_SIZE].copy_from_slice(&create_inner_header(archive_size)?);
+                plaintext[..INNER_HEADER_SIZE]
+                    .copy_from_slice(&create_inner_header(archive_size, layout.format.version())?);
             }
 
             let mut position = offset;
@@ -442,11 +666,11 @@ fn pack_image(
     install_image(&temporary_path, image, create_new)
 }
 
-fn verify_image(file: &mut File, image_size: u64, data_size: u64, keys: &Keys) -> VaultResult<()> {
-    file.seek(SeekFrom::Start(0))?;
-    let mut mac = new_mac(&keys.mac, image_size)?;
+fn verify_image(file: &mut File, layout: &VaultLayout, keys: &Keys) -> VaultResult<()> {
+    file.seek(SeekFrom::Start(layout.data_offset))?;
+    let mut mac = new_mac(&keys.mac, layout)?;
     let mut buffer = [0u8; 64 * 1024];
-    let mut remaining = data_size;
+    let mut remaining = layout.data_size;
     while remaining > 0 {
         let wanted = usize::try_from(remaining.min(buffer.len() as u64))?;
         file.read_exact(&mut buffer[..wanted])?;
@@ -468,9 +692,9 @@ fn verify_image(file: &mut File, image_size: u64, data_size: u64, keys: &Keys) -
     Ok(())
 }
 
-fn decrypt_archive(file: &mut File, data_size: u64, keys: &Keys) -> VaultResult<File> {
-    file.seek(SeekFrom::Start(0))?;
-    let sector_count = data_size / SECTOR_SIZE as u64;
+fn decrypt_archive(file: &mut File, layout: &VaultLayout, keys: &Keys) -> VaultResult<File> {
+    file.seek(SeekFrom::Start(layout.data_offset))?;
+    let sector_count = layout.data_size / SECTOR_SIZE as u64;
     let mut ciphertext = Zeroizing::new([0u8; SECTOR_SIZE]);
     let mut archive = tempfile()?;
     let mut archive_size = None;
@@ -482,13 +706,13 @@ fn decrypt_archive(file: &mut File, data_size: u64, keys: &Keys) -> VaultResult<
             Zeroizing::new(crypt_sector(&keys.xts, sector, &ciphertext, Mode::Decrypt)?);
         if sector == 0 {
             if plaintext[..INNER_MAGIC.len()] != INNER_MAGIC[..]
-                || u32::from_le_bytes(plaintext[16..20].try_into()?) != 1
+                || u32::from_le_bytes(plaintext[16..20].try_into()?) != layout.format.version()
                 || u32::from_le_bytes(plaintext[20..24].try_into()?) != SECTOR_SIZE as u32
             {
                 return Err(invalid_data("vault format is not recognized").into());
             }
             let size = u64::from_le_bytes(plaintext[24..32].try_into()?);
-            let maximum = data_size - INNER_HEADER_SIZE as u64;
+            let maximum = layout.data_size - INNER_HEADER_SIZE as u64;
             if size > maximum {
                 return Err(invalid_data("vault archive length is invalid").into());
             }
@@ -536,76 +760,274 @@ fn unpack_archive(mut archive: File, destination: &Path) -> VaultResult<()> {
     Ok(())
 }
 
-fn unpack_image(image: &Path, destination: &Path, keys: &Keys) -> VaultResult<()> {
-    let (image_size, data_size) = inspect_image(image)?;
+fn unpack_image(
+    image: &Path,
+    destination: &Path,
+    layout: &VaultLayout,
+    keys: &Keys,
+) -> VaultResult<()> {
     let mut file = File::open(image)?;
-    verify_image(&mut file, image_size, data_size, keys)?;
-    let archive = decrypt_archive(&mut file, data_size, keys)?;
+    verify_image(&mut file, layout, keys)?;
+    let archive = decrypt_archive(&mut file, layout, keys)?;
     unpack_archive(archive, destination)
+}
+
+struct TtyEchoGuard {
+    state: String,
+}
+
+impl TtyEchoGuard {
+    fn disable(tty: &File) -> VaultResult<Self> {
+        let saved = Command::new("stty")
+            .arg("-g")
+            .stdin(Stdio::from(tty.try_clone()?))
+            .output()?;
+        if !saved.status.success() {
+            return Err(invalid("cannot read terminal state").into());
+        }
+
+        let state = String::from_utf8(saved.stdout)
+            .map_err(|_| invalid("terminal state is not valid UTF-8"))?;
+        let state = state.trim().to_owned();
+        if state.is_empty() {
+            return Err(invalid("terminal state is empty").into());
+        }
+
+        let disabled = Command::new("stty")
+            .arg("-echo")
+            .stdin(Stdio::from(tty.try_clone()?))
+            .status()?;
+        if !disabled.success() {
+            return Err(invalid("cannot disable terminal echo").into());
+        }
+
+        Ok(Self { state })
+    }
+}
+
+impl Drop for TtyEchoGuard {
+    fn drop(&mut self) {
+        let Ok(tty) = OpenOptions::new().read(true).write(true).open("/dev/tty") else {
+            return;
+        };
+        let _ = Command::new("stty")
+            .arg(&self.state)
+            .stdin(Stdio::from(tty))
+            .status();
+    }
+}
+
+fn open_tty() -> VaultResult<File> {
+    Ok(OpenOptions::new().read(true).write(true).open("/dev/tty")?)
+}
+
+fn read_tty_line(tty: &mut File, maximum: usize) -> VaultResult<Zeroizing<Vec<u8>>> {
+    let mut line = Zeroizing::new(Vec::with_capacity(maximum.min(64)));
+    let mut too_long = false;
+
+    loop {
+        let mut byte = [0u8; 1];
+        tty.read_exact(&mut byte)?;
+        if matches!(byte[0], b'\n' | b'\r') {
+            break;
+        }
+
+        if line.len() < maximum {
+            line.push(byte[0]);
+        } else {
+            too_long = true;
+        }
+    }
+
+    if too_long {
+        return Err(invalid("input is too long").into());
+    }
+    if line.is_empty() {
+        return Err(invalid("input cannot be empty").into());
+    }
+    if line.contains(&0) {
+        return Err(invalid("input contains NUL").into());
+    }
+
+    Ok(line)
+}
+
+fn read_tty_password() -> VaultResult<Zeroizing<Vec<u8>>> {
+    let mut tty = open_tty()?;
+    tty.write_all(b"Vault password: ")?;
+    tty.flush()?;
+
+    let password = {
+        let echo_guard = TtyEchoGuard::disable(&tty)?;
+        let result = read_tty_line(&mut tty, PASSWORD_MAX);
+        drop(echo_guard);
+        result?
+    };
+
+    tty.write_all(b"\n")?;
+    tty.flush()?;
+    Ok(password)
+}
+
+fn read_tty_confirmation(tty: &mut File) -> VaultResult<bool> {
+    let mut response = Vec::with_capacity(4);
+    let mut too_long = false;
+
+    loop {
+        let mut byte = [0u8; 1];
+        tty.read_exact(&mut byte)?;
+        if matches!(byte[0], b'\n' | b'\r') {
+            break;
+        }
+
+        if response.len() < 16 {
+            response.push(byte[0]);
+        } else {
+            too_long = true;
+        }
+    }
+
+    if too_long {
+        return Ok(false);
+    }
+
+    Ok(response.as_slice() == b"y" || response.as_slice() == b"Y")
+}
+
+fn create_generated_vault(image: &Path, data_size: u64, source: &Path) -> VaultResult<()> {
+    if fs::symlink_metadata(image).is_ok() {
+        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "vault already exists").into());
+    }
+
+    let mut tty = open_tty()?;
+    let password = generate_vault_password()?;
+    tty.write_all(b"Vault password (save it now):\n")?;
+    tty.write_all(password.as_slice())?;
+    tty.write_all(b"\n\nI saved the password. Continue? [y/N]: ")?;
+    tty.flush()?;
+
+    if !read_tty_confirmation(&mut tty)? {
+        tty.write_all(b"\nVault creation cancelled.\n")?;
+        tty.flush()?;
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "vault creation cancelled").into());
+    }
+
+    tty.write_all(b"\n")?;
+    tty.flush()?;
+    let layout = VaultLayout::current(data_size)?;
+    let keys = derive_keys(&password, &layout)?;
+    pack_image(image, data_size, source, &layout, &keys, true)
 }
 
 fn usage(program: &str) {
     eprintln!(
-        "Usage:\n  {program} --password-fd FD create IMAGE SIZE SOURCE\n  {program} --password-fd FD pack IMAGE SOURCE\n  {program} --password-fd FD unpack IMAGE DESTINATION"
+        "Usage:\n  {program} --password-fd FD create IMAGE SIZE SOURCE\n  {program} --password-fd FD pack IMAGE SOURCE\n  {program} --password-fd FD unpack IMAGE DESTINATION\n  {program} --tty-password create IMAGE SIZE SOURCE\n  {program} --tty-password pack IMAGE SOURCE\n  {program} --tty-password unpack IMAGE DESTINATION\n  {program} create-generated IMAGE SIZE SOURCE"
     );
 }
 
 fn run() -> VaultResult<()> {
     if unsafe { sodium_init() } < 0 {
-        return Err(io::Error::new(io::ErrorKind::Other, "libsodium initialization failed").into());
+        return Err(io::Error::other("libsodium initialization failed").into());
     }
 
     let arguments: Vec<String> = env::args().skip(1).collect();
-    if arguments.len() < 3 || arguments[0] != "--password-fd" {
+    if arguments.first().map(String::as_str) == Some("create-generated") {
+        if arguments.len() != 4 {
+            usage("mgla-vault");
+            return Err(invalid("invalid command line").into());
+        }
+
+        let image = Path::new(&arguments[1]);
+        let data_size = parse_size(&arguments[2])?;
+        let source = Path::new(&arguments[3]);
+        return create_generated_vault(image, data_size, source);
+    }
+
+    if arguments.is_empty() {
         usage("mgla-vault");
         return Err(invalid("invalid command line").into());
     }
-    let password_fd: i32 = arguments[1]
-        .parse()
-        .map_err(|_| invalid("invalid password fd"))?;
-    let command = arguments[2].as_str();
-    let expected_arguments = match command {
-        "create" => 6,
-        "pack" | "unpack" => 5,
+
+    let (command_index, password_fd) = if arguments[0] == "--password-fd" {
+        if arguments.len() < 3 {
+            usage("mgla-vault");
+            return Err(invalid("invalid command line").into());
+        }
+
+        let fd = arguments[1]
+            .parse()
+            .map_err(|_| invalid("invalid password fd"))?;
+        (2usize, Some(fd))
+    } else if arguments[0] == "--tty-password" {
+        if arguments.len() < 2 {
+            usage("mgla-vault");
+            return Err(invalid("invalid command line").into());
+        }
+        (1usize, None)
+    } else {
+        usage("mgla-vault");
+        return Err(invalid("invalid command line").into());
+    };
+
+    let command = arguments[command_index].as_str();
+    let command_arguments = match command {
+        "create" => 3usize,
+        "pack" | "unpack" => 2usize,
         _ => {
             usage("mgla-vault");
             return Err(invalid("unknown command").into());
         }
     };
+    let expected_arguments = command_index + 1 + command_arguments;
     if arguments.len() != expected_arguments {
         usage("mgla-vault");
         return Err(invalid("invalid command line").into());
     }
 
-    let mut password = read_password(password_fd)?;
-    let derived = derive_keys(&password);
-    password.zeroize();
-    let keys = derived?;
-
-    match command {
+    let mut password = match password_fd {
+        Some(fd) => read_password(fd)?,
+        None => read_tty_password()?,
+    };
+    let result: VaultResult<()> = (|| match command {
         "create" => {
-            let image = Path::new(&arguments[3]);
-            let data_size = parse_size(&arguments[4])?;
-            let source = Path::new(&arguments[5]);
-            pack_image(image, data_size, source, &keys, true)
+            let image = Path::new(&arguments[command_index + 1]);
+            let data_size = parse_size(&arguments[command_index + 2])?;
+            let source = Path::new(&arguments[command_index + 3]);
+            let layout = VaultLayout::current(data_size)?;
+            let keys = derive_keys(&password, &layout)?;
+            pack_image(image, data_size, source, &layout, &keys, true)
         }
         "pack" => {
-            let image = Path::new(&arguments[3]);
-            let source = Path::new(&arguments[4]);
-            let (_, data_size) = inspect_image(image)?;
-            pack_image(image, data_size, source, &keys, false)
+            let image = Path::new(&arguments[command_index + 1]);
+            let source = Path::new(&arguments[command_index + 2]);
+            let existing = inspect_image(image)?;
+            let layout = match existing.format {
+                VaultFormat::LegacyV1 => VaultLayout::current(existing.data_size)?,
+                VaultFormat::CurrentV2 => existing,
+            };
+            let keys = derive_keys(&password, &layout)?;
+            pack_image(image, layout.data_size, source, &layout, &keys, false)
         }
         "unpack" => {
-            let image = Path::new(&arguments[3]);
-            let destination = Path::new(&arguments[4]);
-            unpack_image(image, destination, &keys)
+            let image = Path::new(&arguments[command_index + 1]);
+            let destination = Path::new(&arguments[command_index + 2]);
+            let layout = inspect_image(image)?;
+            let keys = derive_keys(&password, &layout)?;
+            unpack_image(image, destination, &layout, &keys)
         }
         _ => unreachable!(),
-    }
+    })();
+    password.zeroize();
+    result
 }
 
 fn main() {
     if let Err(error) = run() {
+        if let Some(io_error) = error.downcast_ref::<io::Error>() {
+            if io_error.kind() == io::ErrorKind::Interrupted {
+                std::process::exit(2);
+            }
+        }
         eprintln!("mgla-vault: {error}");
         std::process::exit(1);
     }
@@ -618,10 +1040,10 @@ mod tests {
     use tempfile::tempdir;
 
     fn test_keys() -> Keys {
-        unsafe {
-            assert!(sodium_init() >= 0);
+        Keys {
+            xts: [0x11; XTS_KEY_SIZE],
+            mac: [0x22; MAC_KEY_SIZE],
         }
-        derive_keys(b"test-password-for-vault").expect("derive test keys")
     }
 
     #[test]
@@ -630,7 +1052,9 @@ mod tests {
             parse_size("256M").expect("256M should parse"),
             256 * 1024 * 1024
         );
-        assert!(parse_size("256M").unwrap() % SECTOR_SIZE as u64 == 0);
+        assert!(parse_size("256M")
+            .unwrap()
+            .is_multiple_of(SECTOR_SIZE as u64));
         assert!(parse_size("4097").is_err());
     }
 
@@ -639,6 +1063,35 @@ mod tests {
         assert!(validate_entry_path(Path::new("../wallet")).is_err());
         assert!(validate_entry_path(Path::new("/wallet")).is_err());
         assert!(validate_entry_path(Path::new("wallet/name")).is_ok());
+    }
+
+    #[test]
+    fn current_layout_uses_unique_salts() {
+        let first = VaultLayout::current(1024 * 1024).expect("first layout");
+        let second = VaultLayout::current(1024 * 1024).expect("second layout");
+        assert_ne!(first.salt, second.salt);
+        assert_eq!(first.data_size, second.data_size);
+        assert_eq!(first.image_size, second.image_size);
+    }
+
+    #[test]
+    fn generated_password_matches_policy() {
+        let password = generate_vault_password().expect("password generation");
+        assert_eq!(password.len(), GENERATED_PASSWORD_LENGTH);
+        assert!(GENERATED_PASSWORD_LETTERS.contains(&password[0]));
+        assert!(GENERATED_PASSWORD_LETTERS.contains(password.last().expect("last character")));
+
+        let mut used = [false; 256];
+        let mut special_count = 0usize;
+        for &character in password.iter() {
+            assert!(GENERATED_PASSWORD_ALPHABET.contains(&character));
+            assert!(!used[character as usize]);
+            used[character as usize] = true;
+            if GENERATED_PASSWORD_SPECIALS.contains(&character) {
+                special_count += 1;
+            }
+        }
+        assert!(special_count >= GENERATED_PASSWORD_MIN_SPECIALS);
     }
 
     #[test]
@@ -652,8 +1105,9 @@ mod tests {
         fs::write(source.join("alice/wallet.keys"), b"private test data").expect("wallet file");
 
         let keys = test_keys();
-        pack_image(&image, 1024 * 1024, &source, &keys, true).expect("pack image");
-        unpack_image(&image, &destination, &keys).expect("unpack image");
+        let layout = VaultLayout::current(1024 * 1024).expect("current layout");
+        pack_image(&image, layout.data_size, &source, &layout, &keys, true).expect("pack image");
+        unpack_image(&image, &destination, &layout, &keys).expect("unpack image");
         assert_eq!(
             fs::read(destination.join("alice/wallet.keys")).expect("unpacked wallet"),
             b"private test data"
@@ -664,6 +1118,6 @@ mod tests {
         fs::write(&image, &bytes).expect("tamper image");
         let tampered_destination = root.path().join("tampered");
         fs::create_dir(&tampered_destination).expect("tampered destination");
-        assert!(unpack_image(&image, &tampered_destination, &keys).is_err());
+        assert!(unpack_image(&image, &tampered_destination, &layout, &keys).is_err());
     }
 }

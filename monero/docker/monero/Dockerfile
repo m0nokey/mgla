@@ -135,6 +135,8 @@ RUN apk add --no-cache \
         unbound-libs \
         zeromq
 
+RUN command -v stty
+
 # Keep the explicitly requested fixed revisions in every final Alpine image.
 RUN apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \

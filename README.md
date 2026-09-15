@@ -112,7 +112,8 @@ shows it once. Save it offline: losing it means losing access to that vault.
 Wallet seed phrases can restore wallets, but they do not restore local wallet
 cache and labels. The host receives only encrypted vault files; wallets are
 opened inside the Monero container in a private tmpfs and removed when the
-launcher exits.
+launcher exits. The Rust vault process generates and prompts for vault
+passwords directly through `/dev/tty`; the Bash launcher does not retain them.
 
 ## Security Model
 
