@@ -667,6 +667,17 @@ fn pack_image(
 }
 
 fn verify_image(file: &mut File, layout: &VaultLayout, keys: &Keys) -> VaultResult<()> {
+    if layout.format.has_clear_salt() {
+        file.seek(SeekFrom::Start(0))?;
+        let mut stored_salt = [0u8; SALT_SIZE];
+        file.read_exact(&mut stored_salt)?;
+        let salt_matches = layout.salt.ct_eq(stored_salt.as_slice()).unwrap_u8() == 1;
+        stored_salt.zeroize();
+        if !salt_matches {
+            return Err(invalid_data("vault salt does not match its layout").into());
+        }
+    }
+
     file.seek(SeekFrom::Start(layout.data_offset))?;
     let mut mac = new_mac(&keys.mac, layout)?;
     let mut buffer = [0u8; 64 * 1024];
