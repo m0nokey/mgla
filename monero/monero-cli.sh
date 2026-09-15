@@ -143,9 +143,9 @@ fi
 EOS
     chmod +x "${guard}"
     if command -v setsid >/dev/null 2>&1; then
-        setsid sh "${guard}" "${project}" "${compose_file}" "${profile}" "$$" "${cleanup_container_names[*]}" >/dev/null 2>&1 &
+        setsid sh "${guard}" "${project}" "${compose_file}" "${compose_profile}" "$$" "${cleanup_container_names[*]}" >/dev/null 2>&1 &
     else
-        nohup sh "${guard}" "${project}" "${compose_file}" "${profile}" "$$" "${cleanup_container_names[*]}" >/dev/null 2>&1 &
+        nohup sh "${guard}" "${project}" "${compose_file}" "${compose_profile}" "$$" "${cleanup_container_names[*]}" >/dev/null 2>&1 &
     fi
     guard_pid="$!"
 }

@@ -171,7 +171,7 @@ jobs:
           version: v0.74.0
 
   build-test-scan:
-    name: ${{ matrix.architecture }}
+    name: build test scan
     if: github.event_name != 'schedule'
     needs: quality
     runs-on: ${{ matrix.runner }}
@@ -360,7 +360,7 @@ jobs:
           retention-days: 1
 
   upload-security-reports:
-    name: upload ${{ matrix.image }} ${{ matrix.architecture }} report
+    name: upload security reports
     needs: build-test-scan
     if: >-
       needs.build-test-scan.result == 'success' &&
@@ -512,7 +512,7 @@ jobs:
           skip-shas: ${{ steps.latest.outputs.shas }}
 
   rescan-latest:
-    name: rescan ${{ matrix.image }} ${{ matrix.architecture }}
+    name: rescan latest images
     if: github.event_name == 'schedule'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45

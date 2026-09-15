@@ -122,4 +122,10 @@ generate_networks() {
     int_network_container_exit_b_ipv4="10.${int_second}.${int_third}.3"
     int_network_container_haproxy_ipv4="10.${int_second}.${int_third}.4"
     int_network_container_app_ipv4="10.${int_second}.${int_third}.5"
+
+    export ext_network_container_subnet_cidr_ipv4 ext_network_container_gateway_ipv4
+    export ext_network_container_exit_a_ipv4 ext_network_container_exit_b_ipv4
+    export int_network_container_subnet_cidr_ipv4 int_network_container_gateway_ipv4
+    export int_network_container_exit_a_ipv4 int_network_container_exit_b_ipv4
+    export int_network_container_haproxy_ipv4 int_network_container_app_ipv4
 }
