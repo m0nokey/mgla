@@ -1,6 +1,4 @@
-*
-!Dockerfile
-!wallet-launcher.sh
+**
 !vault/
 !vault/Cargo.toml
 !vault/Cargo.lock

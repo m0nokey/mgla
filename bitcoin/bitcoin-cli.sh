@@ -6,8 +6,14 @@ umask 077
 : "${HOME:?HOME is required}"
 
 module_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-project="mgla"
-compose_file="${module_dir}/compose.yaml"
+
+# shellcheck source=../shared/lib/network.sh
+source "${module_dir}/../shared/lib/network.sh"
+
+project="mgla-bitcoin"
+compose_profile="bitcoin"
+image_project="mgla"
+compose_file="${module_dir}/../compose.yaml"
 workdir="$(mktemp -d -t "${project}.bitcoin.XXXXXXXX")"
 wallet_store_host_dir="${BITCOIN_WALLET_STORE_HOST_DIR:-${WALLET_STORE_HOST_DIR:-${HOME}/.mgla/bitcoin}}"
 
@@ -68,9 +74,9 @@ if [[ ! "${image_tag}" =~ ^[[:alnum:]_][[:alnum:]._-]{0,127}$ ]]; then
 fi
 
 image_registry="${image_registry%/}"
-image_prefix="mgla"
+image_prefix="${image_project}"
 if [[ -n "${image_registry}" ]]; then
-    image_prefix="${image_registry}/mgla"
+    image_prefix="${image_registry}/${image_project}"
 fi
 
 exit_image="${image_prefix}-exit:${image_tag}"
@@ -92,6 +98,7 @@ container_names=(
 )
 
 legacy_project="tor_alpine_monero_test"
+previous_project="mgla"
 legacy_container_names=(
     "tor_monero_test_exit_a"
     "tor_monero_test_exit_b"
@@ -110,11 +117,11 @@ int_network_container_gateway_ipv4=""
 int_network_container_exit_a_ipv4=""
 int_network_container_exit_b_ipv4=""
 int_network_container_haproxy_ipv4=""
-int_network_container_bitcoin_ipv4=""
+int_network_container_app_ipv4=""
 guard_pid=""
 
 compose() {
-    docker compose -p "${project}" -f "${compose_file}" "$@"
+    docker compose -p "${project}" --profile "${compose_profile}" -f "${compose_file}" "$@"
 }
 
 need() {
@@ -133,116 +140,13 @@ set_container_identity() {
     bitcoin_container_gid="${gid}"
 }
 
-docker_subnets() {
-    local ids id
-    local -a id_array=()
-
-    ids="$(docker network ls -q 2>/dev/null || true)"
-    [[ -n "${ids}" ]] || return 0
-
-    while IFS= read -r id; do
-        [[ -n "${id}" ]] && id_array+=("${id}")
-    done <<< "${ids}"
-
-    ((${#id_array[@]} > 0)) || return 0
-    docker network inspect "${id_array[@]}" \
-        --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' 2>/dev/null |
-        grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$' || true
-}
-
-cidr_overlaps() {
-    local first="${1}" second="${2}"
-
-    awk -v first="${first}" -v second="${second}" '
-        function ip_to_int(ip, octets) {
-            split(ip, octets, ".")
-            return octets[1] * 16777216 + octets[2] * 65536 + octets[3] * 256 + octets[4]
-        }
-        function cidr_range(cidr, fields, ip, prefix, block, value, start, end) {
-            split(cidr, fields, "/")
-            ip = fields[1]
-            prefix = fields[2] + 0
-            block = 2 ^ (32 - prefix)
-            value = ip_to_int(ip)
-            start = int(value / block) * block
-            end = start + block - 1
-            return start ":" end
-        }
-        BEGIN {
-            split(cidr_range(first), a, ":")
-            split(cidr_range(second), b, ":")
-            exit((a[2] < b[1] || a[1] > b[2]) ? 1 : 0)
-        }
-    '
-}
-
-subnet_free() {
-    local candidate="${1}" subnet
-
-    while IFS= read -r subnet; do
-        [[ -z "${subnet}" ]] && continue
-        if cidr_overlaps "${candidate}" "${subnet}"; then
-            return 1
-        fi
-    done < <(docker_subnets)
-
-    return 0
-}
-
-random_octet() {
-    local minimum="${1:-0}" maximum="${2:-255}"
-    local range=$((maximum - minimum + 1))
-    local value=$((RANDOM % range))
-
-    printf '%d' $((value + minimum))
-}
-
-generate_networks() {
-    local mask=29
-    local ext_second ext_third int_second int_third
-    local found=0
-    local attempt
-
-    for ((attempt = 1; attempt <= 512; attempt++)); do
-        ext_second="$(random_octet 19 119)"
-        ext_third="$(random_octet 0 255)"
-        ext_network_container_subnet_cidr_ipv4="10.${ext_second}.${ext_third}.0/${mask}"
-        if subnet_free "${ext_network_container_subnet_cidr_ipv4}"; then
-            found=1
-            break
-        fi
-    done
-    ((found == 1)) || die 'could not find a free Docker external subnet'
-
-    ext_network_container_gateway_ipv4="10.${ext_second}.${ext_third}.1"
-    ext_network_container_exit_a_ipv4="10.${ext_second}.${ext_third}.2"
-    ext_network_container_exit_b_ipv4="10.${ext_second}.${ext_third}.3"
-
-    found=0
-    for ((attempt = 1; attempt <= 512; attempt++)); do
-        int_second="$(random_octet 121 221)"
-        int_third="$(random_octet 0 255)"
-        int_network_container_subnet_cidr_ipv4="10.${int_second}.${int_third}.0/${mask}"
-        if subnet_free "${int_network_container_subnet_cidr_ipv4}"; then
-            found=1
-            break
-        fi
-    done
-    ((found == 1)) || die 'could not find a free Docker internal subnet'
-
-    int_network_container_gateway_ipv4="10.${int_second}.${int_third}.1"
-    int_network_container_exit_a_ipv4="10.${int_second}.${int_third}.2"
-    int_network_container_exit_b_ipv4="10.${int_second}.${int_third}.3"
-    int_network_container_haproxy_ipv4="10.${int_second}.${int_third}.4"
-    int_network_container_bitcoin_ipv4="10.${int_second}.${int_third}.5"
-}
 
 cleanup_stack() {
     set +e
 
     if command -v docker >/dev/null 2>&1; then
         if [[ -n "${ext_network_container_subnet_cidr_ipv4:-}" ]]; then
-            docker compose -p "${project}" -f "${compose_file}" down \
+            docker compose -p "${project}" --profile "${compose_profile}" -f "${compose_file}" down \
                 --volumes --remove-orphans >/dev/null 2>&1 || true
         fi
 
@@ -253,12 +157,16 @@ cleanup_stack() {
         docker network rm \
             "${project}_external_network" \
             "${project}_internal_network" \
+            "${previous_project}_external_network" \
+            "${previous_project}_internal_network" \
             "${legacy_project}_external_network" \
             "${legacy_project}_internal_network" >/dev/null 2>&1 || true
 
         docker volume rm -f \
             "${project}_exit_a_run" \
             "${project}_exit_b_run" \
+            "${previous_project}_exit_a_run" \
+            "${previous_project}_exit_b_run" \
             "${legacy_project}_exit_a_run" \
             "${legacy_project}_exit_b_run" >/dev/null 2>&1 || true
     fi
@@ -446,7 +354,7 @@ export_runtime_config() {
     export int_network_container_exit_a_ipv4
     export int_network_container_exit_b_ipv4
     export int_network_container_haproxy_ipv4
-    export int_network_container_bitcoin_ipv4
+    export int_network_container_app_ipv4
 }
 
 main() {

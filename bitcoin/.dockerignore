@@ -1,8 +1,6 @@
 **
 !requirements.lock
-!docker/
-!docker/bitcoin/
-!docker/bitcoin/Dockerfile
-!docker/bitcoin/entrypoint.sh
-!docker/bitcoin/wallet-launcher.sh
-!docker/bitcoin/network-check.py
+!Dockerfile
+!entrypoint.sh
+!network-check.py
+!wallet-launcher.sh

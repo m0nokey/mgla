@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 SEVERITIES = ("UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL")
-IMAGE_ORDER = ("exit", "haproxy", "monero")
+IMAGE_ORDER = ("exit", "haproxy", "monero", "bitcoin")
 
 
 def classify(value):

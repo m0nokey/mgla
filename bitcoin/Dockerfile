@@ -117,9 +117,9 @@ RUN apk upgrade --no-cache \
     && install -d -m 0755 -o root -g root /opt/app /opt/venv
 
 COPY --from=builder /opt/venv /opt/venv
-COPY --chmod=0755 docker/bitcoin/entrypoint.sh /usr/local/bin/entrypoint
-COPY --chmod=0755 docker/bitcoin/wallet-launcher.sh /opt/app/bitcoin
-COPY --chmod=0755 docker/bitcoin/network-check.py /opt/app/network-check.py
+COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint
+COPY --chmod=0755 wallet-launcher.sh /opt/app/bitcoin
+COPY --chmod=0755 network-check.py /opt/app/network-check.py
 
 RUN command -v timeout \
     && test -e /usr/share/zoneinfo/UTC \

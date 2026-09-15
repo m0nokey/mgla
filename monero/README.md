@@ -1,29 +1,37 @@
 # Monero module
 
-This module runs the Monero CLI wallet through a disposable Tor transport.
-The wallet menu, daemon discovery, named wallet directories, and Nyx hints are
-kept in the launcher so the normal interactive workflow remains unchanged.
+This module runs the Monero command-line wallet through the shared disposable
+Tor transport. It uses the root Compose file's `monero` profile and keeps the
+interactive wallet and vault logic in this directory.
 
 ## Layout
 
-- `monero-cli.sh` — the real launcher and lifecycle controller.
-- `compose.yaml` — the four-service stack definition.
-- `docker/exit` — one hardened Alpine image used by `mgla-exit-a` and `mgla-exit-b`.
-- `docker/haproxy` — the internal Tor SOCKS relay image.
-- `docker/monero` — a multi-stage Alpine source build and the wallet menu.
+- `Dockerfile` — multi-stage Alpine 3.24 source build of `monero-wallet-cli`.
+- `monero-cli.sh` — lifecycle controller used by `run.sh` and CI.
+- `wallet-launcher.sh` — wallet menu and vault session UI copied into the image.
+- `../network/exit` — shared hardened Tor exit image.
+- `../network/haproxy` — shared internal SOCKS relay image.
+- `../shared/lib/network.sh` — shared random Docker subnet generation.
+- `../shared/vault` — shared Rust encrypted-file utility used at build time.
 
 There is no helper container and no test-client service. Network checks run from
 the final `mgla-monero` container itself.
 
 ## Run locally
 
-From the repository root, start the project launcher and select the Monero scenario:
+From the repository root:
 
 ```bash
-bash run.sh
+bash ./run.sh
 ```
 
-The default mode pulls these images from GHCR:
+Select `1. Monero wallet`. For direct module invocation:
+
+```bash
+bash monero/monero-cli.sh
+```
+
+The default mode pulls:
 
 ```text
 ghcr.io/m0nokey/mgla-exit:latest
@@ -31,71 +39,22 @@ ghcr.io/m0nokey/mgla-haproxy:latest
 ghcr.io/m0nokey/mgla-monero:latest
 ```
 
-For a local source build instead of pulling, run:
+For a local source build:
 
 ```bash
-IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash run.sh
+IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash ./run.sh
 ```
 
-GHCR packages must be public for unauthenticated pulls. Otherwise authenticate first with
-`docker login ghcr.io`.
-
-For CI, debugging, or direct module invocation:
-
-```bash
-bash monero/monero-cli.sh
-```
-
-The host stores encrypted wallet vault files in `$HOME/.mgla/`. Each vault
-has a fixed image size of 128 MiB and can contain multiple named wallets:
-
-```text
-$HOME/.mgla/
-├── personal.mgla
-└── savings.mgla
-```
-
-New vaults use the current fixed-size format and are exactly the requested size.
-Vault files created by older builds are not migrated automatically.
-
-The startup menu lists the existing `.mgla` files, lets you open one, or lets
-you create a new vault. To use another host directory:
-
-```bash
-WALLET_STORE_HOST_DIR=/absolute/path/to/.mgla bash run.sh
-```
-
-The first launch generates a high-entropy password and displays it once. Save
-it offline; losing it means losing access to that vault. Seed phrases can
-restore wallets, but not local cache and labels. The vault directory is the
-only host bind mount. Wallet files are decrypted only inside `/monero/wallets`, a private
-tmpfs that is cleared when the launcher exits.
-
-Before opening a vault, choose its unlock mode:
-
-- `Prompt` is the stateless mode: the Rust utility asks for the vault password
-  on every open and save, then discards the derived key.
-- `Session` asks once and keeps only the derived key in locked memory while the
-  launcher is running. A private Unix socket connects the Bash UI to this
-  Rust process; the plaintext password is not retained by either process.
-
-Both modes use the same `.mgla` files. A normal exit saves dirty wallet data
-before the session key is erased and the tmpfs is cleared. A forced kill or
-power loss can discard changes that were not yet packed, while the previous
-encrypted vault image remains intact.
-
-The menu lets you open an existing wallet, create a new named wallet, restore a
-wallet from its seed, return to the wallet list, or exit. A daemon is selected
-afresh for each wallet session from currently reachable onion nodes, preferring
-the highest reported height.
+The host stores encrypted vault files in `$HOME/.mgla/` by default. The
+launcher generates a new `.mgla` file at the fixed 128 MiB size and the Rust
+utility unpacks wallet files only into the private container tmpfs.
 
 ## Network model
 
-The wallet route is shown from the application upward. The application cannot
-bypass the internal SOCKS broker:
+The wallet is at the bottom and has no direct Internet route:
 
 ```text
-                         Monero onion daemon (.onion)
+                         Monero daemon (.onion)
                                       ▲
                                       │ Tor network
                          ┌────────────┴────────────┐
@@ -103,64 +62,45 @@ bypass the internal SOCKS broker:
                      exit-a                      exit-b
                          ▲                         ▲
                          └────────────┬────────────┘
-                                      │
-                       haproxy (Tor SOCKS relay)
+                                      │ external_network
+                       haproxy (SOCKS5/SOCKS5h relay)
                                       ▲
                                       │ internal_network only
                                       │
                                 monero-cli
 ```
 
-`mgla-monero` is attached only to Docker's `internal_network`. It has no direct
-Internet route and no published host ports. `mgla-haproxy` is the only egress
-broker visible to the application. Both exit containers have separate Tor
-state volumes, and HAProxy health checks fail over between them.
+`mgla-monero` is attached only to `internal_network`. It has no published
+ports and cannot bypass HAProxy. HAProxy reaches only the two Tor exits, and
+the exits are the only services attached to the external bridge.
 
-The launcher performs daemon discovery and every `/get_info` request through
-`SOCKS5h`, so hostname resolution is performed by Tor. This protects the
-application's direct network path; it does not make a remote daemon trusted or
-provide a blanket anonymity guarantee.
+Daemon discovery and Monero RPC requests use `SOCKS5h`, so hostname resolution
+is performed through Tor. A remote daemon remains untrusted unless explicitly
+marked trusted by the wallet; the transport does not remove that trust choice.
 
-## Security objective
+## Wallet and vault
 
-The primary purpose of this project is to make library and container security
-continuously testable and to reduce supply-chain and remote-code-execution
-(RCE) exposure:
+The wallet menu can create, restore, open, and close named wallet directories
+inside the selected vault. A daemon is selected afresh for each wallet session
+from reachable onion nodes, preferring the highest reported chain height.
 
-- keep final images minimal and run services as non-root users;
-- pin Alpine security fixes and the Monero source revision;
-- build only the Monero CLI wallet and verify its architecture and runtime linkage;
-- build and test the memory-safe Rust vault in the disposable Alpine builder;
-- prevent the wallet from reaching the Internet outside the Tor path;
-- build both supported architectures and scan every final image in CI.
+The Rust vault is a shared userspace utility. It uses authenticated encryption
+building blocks, fixed-size images, a per-vault random salt, and zeroization of
+sensitive buffers. It never mounts a block device and the plaintext wallet tree
+exists only in the container's private tmpfs during the session. The vault
+password is displayed once when a vault is created; losing it means losing
+access to that vault. A seed can recover a Monero wallet, but not local labels
+or cache.
 
-The initial CI policy treats known fixable `critical` and `high` findings as
-release blockers. No scanner can prove that an image contains zero possible
-CVEs or RCEs, so unfixed and newly disclosed issues still require review and
-an explicit dependency update.
+## Security checks
 
-## Build and verification
+CI builds both supported architectures and verifies:
 
-The Monero wallet is built from the pinned `v0.18.5.1` source commit in an
-Alpine builder, following the dependency model maintained by Alpine's official
-`community/monero` APKBUILD. Only CMake's `simplewallet` target is requested;
-the daemon, RPC server, GUI, tests, and debug utilities are not built. The
-binary architecture and all runtime links are checked before the disposable
-builder stage is discarded. The Rust `mgla-vault` utility is tested in the same
-builder and uses system OpenSSL for AES-256-XTS, libsodium for Argon2id, and
-authenticated HMAC-SHA-256 integrity protection. It stores no cleartext format header
-and never creates a block device or mount. Trezor support is intentionally
-disabled in this minimal first version and can be added as a separate module
-option.
+- the pinned Monero source revision and Alpine runtime links;
+- the shared Rust vault tests, formatting, Clippy, and advisory audit;
+- direct-route blocking and Tor SOCKS5h connectivity;
+- Trivy OS and library findings for exit, HAProxy, and Monero images.
 
-GitHub Actions builds `linux/amd64` and `linux/arm64` on native runners, runs
-the Tor and network integration checks, and scans all three final images for
-fixed critical and high vulnerabilities. Pull requests and non-main branches
-only validate; successful pushes to `main` publish one multi-architecture `latest`
-tag to GHCR. Temporary architecture tags and older package versions are removed
-after publication while the children required by `latest` are retained.
-
-Pull mode does not compile locally. Use `IMAGE_MODE=build` for a local source
-build; the build mode uses Docker's layer cache and refreshes the Alpine base
-manifest with `--pull`. Set `NO_CACHE=1` only when deliberately forcing a clean
-local rebuild.
+The initial release policy blocks fixable `HIGH` and `CRITICAL` findings. See
+the [latest CI workflow](https://github.com/m0nokey/mgla/actions/workflows/ci.yml)
+for the Summary table and SARIF reports.

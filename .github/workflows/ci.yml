@@ -1,22 +1,24 @@
-name: Monero module
+name: mgla CI
 
 on:
   push:
     paths:
-      - "monero/docker/**"
-      - "monero/ci/**"
-      - "monero/compose.yaml"
-      - "monero/monero-cli.sh"
+      - "bitcoin/**"
+      - "monero/**"
+      - "network/**"
+      - "shared/**"
+      - "compose.yaml"
       - "run.sh"
-      - ".github/workflows/monero.yml"
+      - ".github/workflows/ci.yml"
   pull_request:
     paths:
-      - "monero/docker/**"
-      - "monero/ci/**"
-      - "monero/compose.yaml"
-      - "monero/monero-cli.sh"
+      - "bitcoin/**"
+      - "monero/**"
+      - "network/**"
+      - "shared/**"
+      - "compose.yaml"
       - "run.sh"
-      - ".github/workflows/monero.yml"
+      - ".github/workflows/ci.yml"
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -24,13 +26,13 @@ on:
 permissions:
   contents: read
 
-# Pull requests and non-main pushes validate local images only. Successful
-# pushes to main publish multi-architecture images to GHCR. The scheduled run
-# only rescans the already published latest images.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  ALPINE_VERSION: 3.24
   MONERO_VERSION: v0.18.5.1
   MONERO_COMMIT: 4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5
+  ELECTRUM_VERSION: 4.8.2
+  ELECTRUM_ARCHIVE_SHA256: f38cee333c866986cdfb304428fa7487affc429c3853fc80e9822bd420bbc229
   IMAGE_REGISTRY: ghcr.io/m0nokey
 
 jobs:
@@ -70,24 +72,29 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t shell_files < <(
-            find monero -type f -name '*.sh' -print
+            find bitcoin monero network shared/lib -type f -name '*.sh' -print
             printf '%s\n' run.sh
           )
           test "${#shell_files[@]}" -gt 0
           shellcheck --severity=warning "${shell_files[@]}"
 
-      - name: Validate Compose interpolation
+      - name: Validate Monero Compose profile
         run: |
           set -euxo pipefail
           export exit_a_container=mgla-exit-a
           export exit_b_container=mgla-exit-b
           export haproxy_container=mgla-haproxy
           export monero_container=mgla-monero
+          export bitcoin_container=mgla-bitcoin
           export exit_image=mgla-exit:lint
           export haproxy_image=mgla-haproxy:lint
           export monero_image=mgla-monero:lint
+          export bitcoin_image=mgla-bitcoin:lint
+          export alpine_version="${ALPINE_VERSION}"
           export monero_version="${MONERO_VERSION}"
           export monero_commit="${MONERO_COMMIT}"
+          export electrum_version="${ELECTRUM_VERSION}"
+          export electrum_archive_sha256="${ELECTRUM_ARCHIVE_SHA256}"
           export wallet_store_host_dir=/tmp/mgla-wallets
           export wallet_vault_size=128M
           export ext_network_container_subnet_cidr_ipv4=10.90.0.0/29
@@ -96,30 +103,61 @@ jobs:
           export ext_network_container_exit_b_ipv4=10.90.0.3
           export int_network_container_subnet_cidr_ipv4=10.91.0.0/29
           export int_network_container_gateway_ipv4=10.91.0.1
-          export int_network_container_haproxy_ipv4=10.91.0.2
-          export int_network_container_app_ipv4=10.91.0.3
-          export int_network_container_exit_a_ipv4=10.91.0.4
-          export int_network_container_exit_b_ipv4=10.91.0.5
-          docker compose --ansi never -f monero/compose.yaml config --quiet
+          export int_network_container_exit_a_ipv4=10.91.0.2
+          export int_network_container_exit_b_ipv4=10.91.0.3
+          export int_network_container_haproxy_ipv4=10.91.0.4
+          export int_network_container_app_ipv4=10.91.0.5
+          docker compose --ansi never --profile monero -f compose.yaml config --quiet
 
-      - name: Compile Python helper
-        run: python3 -m py_compile monero/ci/security-summary.py
+      - name: Validate Bitcoin Compose profile
+        run: |
+          set -euxo pipefail
+          export exit_a_container=mgla-exit-a
+          export exit_b_container=mgla-exit-b
+          export haproxy_container=mgla-haproxy
+          export monero_container=mgla-monero
+          export bitcoin_container=mgla-bitcoin
+          export exit_image=mgla-exit:lint
+          export haproxy_image=mgla-haproxy:lint
+          export monero_image=mgla-monero:lint
+          export bitcoin_image=mgla-bitcoin:lint
+          export alpine_version="${ALPINE_VERSION}"
+          export monero_version="${MONERO_VERSION}"
+          export monero_commit="${MONERO_COMMIT}"
+          export electrum_version="${ELECTRUM_VERSION}"
+          export electrum_archive_sha256="${ELECTRUM_ARCHIVE_SHA256}"
+          export wallet_store_host_dir=/tmp/mgla-bitcoin-wallets
+          export wallet_vault_size=128M
+          export ext_network_container_subnet_cidr_ipv4=10.90.0.0/29
+          export ext_network_container_gateway_ipv4=10.90.0.1
+          export ext_network_container_exit_a_ipv4=10.90.0.2
+          export ext_network_container_exit_b_ipv4=10.90.0.3
+          export int_network_container_subnet_cidr_ipv4=10.91.0.0/29
+          export int_network_container_gateway_ipv4=10.91.0.1
+          export int_network_container_exit_a_ipv4=10.91.0.2
+          export int_network_container_exit_b_ipv4=10.91.0.3
+          export int_network_container_haproxy_ipv4=10.91.0.4
+          export int_network_container_app_ipv4=10.91.0.5
+          docker compose --ansi never --profile bitcoin -f compose.yaml config --quiet
+
+      - name: Compile Python helpers
+        run: python3 -m py_compile shared/ci/security-summary.py bitcoin/network-check.py
 
       - name: Check Rust formatting
-        run: cargo fmt --manifest-path monero/docker/monero/vault/Cargo.toml -- --check
+        run: cargo fmt --manifest-path shared/vault/Cargo.toml -- --check
 
       - name: Run Rust Clippy
         run: >-
           cargo clippy
-          --manifest-path monero/docker/monero/vault/Cargo.toml
+          --manifest-path shared/vault/Cargo.toml
           --locked
           --all-targets
           --
           -D warnings
 
       - name: Audit Rust dependencies
-        working-directory: monero/docker/monero/vault
-        run: cargo audit
+        working-directory: shared/vault
+        run: cargo audit --locked
 
       - name: Scan Docker and Compose configuration
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -137,7 +175,7 @@ jobs:
     if: github.event_name != 'schedule'
     needs: quality
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    timeout-minutes: 240
     permissions:
       actions: read
       contents: read
@@ -161,12 +199,21 @@ jobs:
       - name: Set up BuildKit
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
-      - name: Build and run integration checks
+      - name: Build and run Monero integration checks
         env:
+          CI: "1"
           IMAGE_MODE: build
           IMAGE_TAG: ${{ github.sha }}-${{ matrix.architecture }}
-        run: |
-          CI=1 DOCKER_DEFAULT_PLATFORM="${{ matrix.platform }}" bash monero/monero-cli.sh
+          DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
+        run: bash monero/monero-cli.sh
+
+      - name: Build and run Bitcoin integration checks
+        env:
+          CI: "1"
+          IMAGE_MODE: build
+          IMAGE_TAG: ${{ github.sha }}-${{ matrix.architecture }}
+          DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
+        run: bash bitcoin/bitcoin-cli.sh
 
       - name: Prepare security report directory
         run: mkdir -p trivy-reports
@@ -213,8 +260,22 @@ jobs:
           version: v0.74.0
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
 
+      - name: Generate Bitcoin security report
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/m0nokey/mgla-bitcoin:${{ github.sha }}-${{ matrix.architecture }}
+          format: sarif
+          output: trivy-reports/bitcoin-${{ matrix.architecture }}.sarif
+          exit-code: "0"
+          ignore-unfixed: false
+          vuln-type: os,library
+          scanners: vuln
+          version: v0.74.0
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+
       - name: Publish security summary
-        run: python3 monero/ci/security-summary.py
+        run: python3 shared/ci/security-summary.py
 
       - name: Upload security report artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.1
@@ -224,7 +285,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Scan exit image
+      - name: Scan exit image for release blockers
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
@@ -237,7 +298,7 @@ jobs:
           version: v0.74.0
           severity: CRITICAL,HIGH
 
-      - name: Scan HAProxy image
+      - name: Scan HAProxy image for release blockers
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
@@ -250,11 +311,24 @@ jobs:
           version: v0.74.0
           severity: CRITICAL,HIGH
 
-      - name: Scan Monero image
+      - name: Scan Monero image for release blockers
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: ghcr.io/m0nokey/mgla-monero:${{ github.sha }}-${{ matrix.architecture }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          scanners: vuln
+          version: v0.74.0
+          severity: CRITICAL,HIGH
+
+      - name: Scan Bitcoin image for release blockers
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/m0nokey/mgla-bitcoin:${{ github.sha }}-${{ matrix.architecture }}
           format: table
           exit-code: "1"
           ignore-unfixed: true
@@ -268,11 +342,12 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}-${{ matrix.architecture }}
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           docker save \
             "${IMAGE_REGISTRY}/mgla-exit:${IMAGE_TAG}" \
             "${IMAGE_REGISTRY}/mgla-haproxy:${IMAGE_TAG}" \
             "${IMAGE_REGISTRY}/mgla-monero:${IMAGE_TAG}" \
+            "${IMAGE_REGISTRY}/mgla-bitcoin:${IMAGE_TAG}" \
             | gzip -1 > "mgla-images-${{ matrix.architecture }}.tar.gz"
 
       - name: Upload architecture images
@@ -285,18 +360,38 @@ jobs:
           retention-days: 1
 
   upload-security-reports:
-    name: upload security reports
+    name: upload ${{ matrix.image }} ${{ matrix.architecture }} report
     needs: build-test-scan
     if: >-
       needs.build-test-scan.result == 'success' &&
       (github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read
       security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: exit
+            architecture: amd64
+          - image: exit
+            architecture: arm64
+          - image: haproxy
+            architecture: amd64
+          - image: haproxy
+            architecture: arm64
+          - image: monero
+            architecture: amd64
+          - image: monero
+            architecture: arm64
+          - image: bitcoin
+            architecture: amd64
+          - image: bitcoin
+            architecture: arm64
 
     steps:
       - name: Download security reports
@@ -306,51 +401,21 @@ jobs:
           path: trivy-reports
           merge-multiple: true
 
-      - name: Upload exit reports to GitHub Security
+      - name: Upload SARIF report
         uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
         with:
-          sarif_file: trivy-reports/exit-amd64.sarif
-          category: mgla-exit-amd64
-
-      - name: Upload arm64 exit report to GitHub Security
-        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
-        with:
-          sarif_file: trivy-reports/exit-arm64.sarif
-          category: mgla-exit-arm64
-
-      - name: Upload HAProxy reports to GitHub Security
-        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
-        with:
-          sarif_file: trivy-reports/haproxy-amd64.sarif
-          category: mgla-haproxy-amd64
-
-      - name: Upload arm64 HAProxy report to GitHub Security
-        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
-        with:
-          sarif_file: trivy-reports/haproxy-arm64.sarif
-          category: mgla-haproxy-arm64
-
-      - name: Upload Monero reports to GitHub Security
-        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
-        with:
-          sarif_file: trivy-reports/monero-amd64.sarif
-          category: mgla-monero-amd64
-
-      - name: Upload arm64 Monero report to GitHub Security
-        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
-        with:
-          sarif_file: trivy-reports/monero-arm64.sarif
-          category: mgla-monero-arm64
+          sarif_file: trivy-reports/${{ matrix.image }}-${{ matrix.architecture }}.sarif
+          category: mgla-${{ matrix.image }}-${{ matrix.architecture }}
 
   publish:
-    name: publish multi-architecture manifests
+    name: publish latest multi-architecture images
     needs: build-test-scan
     if: >-
       needs.build-test-scan.result == 'success' &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       actions: read
       contents: read
@@ -367,8 +432,9 @@ jobs:
       - name: Load architecture images
         run: |
           set -euo pipefail
+          shopt -s nullglob
           archives=(image-artifacts/*.tar.gz)
-          test -e "${archives[0]}"
+          test "${#archives[@]}" -eq 2
           for archive in "${archives[@]}"; do
             gzip -dc "${archive}" | docker load
           done
@@ -385,40 +451,53 @@ jobs:
 
       - name: Push architecture images
         env:
-          IMAGE_TAG: ${{ github.sha }}
+          SOURCE_TAG: ${{ github.sha }}
         run: |
-          set -eux
+          set -euxo pipefail
           for architecture in amd64 arm64; do
-            docker push "${IMAGE_REGISTRY}/mgla-exit:${IMAGE_TAG}-${architecture}"
-            docker push "${IMAGE_REGISTRY}/mgla-haproxy:${IMAGE_TAG}-${architecture}"
-            docker push "${IMAGE_REGISTRY}/mgla-monero:${IMAGE_TAG}-${architecture}"
+            for image in exit haproxy monero bitcoin; do
+              docker push "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-${architecture}"
+            done
+          done
+
+      - name: Verify architecture tags exist
+        env:
+          SOURCE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for image in exit haproxy monero bitcoin; do
+            for architecture in amd64 arm64; do
+              docker buildx imagetools inspect \
+                "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-${architecture}" >/dev/null
+            done
           done
 
       - name: Publish multi-architecture manifests
         env:
           SOURCE_TAG: ${{ github.sha }}
         run: |
-          set -eux
-          for image in exit haproxy monero; do
+          set -euxo pipefail
+          for image in exit haproxy monero bitcoin; do
             docker buildx imagetools create \
               --tag "${IMAGE_REGISTRY}/mgla-${image}:latest" \
               "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-amd64" \
               "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-arm64"
           done
 
-      - name: Resolve latest manifest digests
+      - name: Resolve latest and current architecture digests
         id: latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
           latest_shas=""
-          for package in mgla-exit mgla-haproxy mgla-monero; do
-            digest="$(gh api \
+          for package in mgla-exit mgla-haproxy mgla-monero mgla-bitcoin; do
+            digests="$(gh api \
               "user/packages/container/${package}/versions?per_page=100" \
-              --jq 'first(.[] | select((.metadata.container.tags // []) | index("latest")) | .name) // empty')"
-            test -n "${digest}"
-            latest_shas="${latest_shas}${latest_shas:+,}${digest}"
+              --jq "[.[] | select((.metadata.container.tags // []) | any(.[]; . == \"latest\" or . == \"${SOURCE_TAG}-amd64\" or . == \"${SOURCE_TAG}-arm64\"))) | .name] | join(\",\")")"
+            test -n "${digests}"
+            latest_shas="${latest_shas}${latest_shas:+,}${digests}"
           done
           echo "shas=${latest_shas}" >> "${GITHUB_OUTPUT}"
 
@@ -427,13 +506,13 @@ jobs:
         with:
           account: user
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: "mgla-exit mgla-haproxy mgla-monero"
+          image-names: "mgla-exit mgla-haproxy mgla-monero mgla-bitcoin"
           tag-selection: both
           cut-off: 1s
           skip-shas: ${{ steps.latest.outputs.shas }}
 
   rescan-latest:
-    name: latest image rescan
+    name: rescan ${{ matrix.image }} ${{ matrix.architecture }}
     if: github.event_name == 'schedule'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -445,14 +524,45 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - architecture: amd64
+          - image: exit
+            architecture: amd64
             platform: linux/amd64
             runner: ubuntu-24.04
-          - architecture: arm64
+          - image: exit
+            architecture: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+          - image: haproxy
+            architecture: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - image: haproxy
+            architecture: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+          - image: monero
+            architecture: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - image: monero
+            architecture: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+          - image: bitcoin
+            architecture: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - image: bitcoin
+            architecture: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
 
     steps:
+      - name: Check out source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -460,95 +570,49 @@ jobs:
           username: m0nokey
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull latest images
+      - name: Pull latest image
         run: |
           set -euxo pipefail
-          for image in exit haproxy monero; do
-            docker pull --platform "${{ matrix.platform }}" \
-              "${IMAGE_REGISTRY}/mgla-${image}:latest"
-          done
+          docker pull --platform "${{ matrix.platform }}" \
+            "${IMAGE_REGISTRY}/mgla-${{ matrix.image }}:latest"
 
       - name: Prepare rescan reports
         run: mkdir -p trivy-reports
 
-      - name: Scan latest exit image
-        id: scan_exit
+      - name: Scan latest image
+        id: scan
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-exit:latest
+          image-ref: ghcr.io/m0nokey/mgla-${{ matrix.image }}:latest
           format: sarif
-          output: trivy-reports/latest-exit-${{ matrix.architecture }}.sarif
+          output: trivy-reports/${{ matrix.image }}-${{ matrix.architecture }}.sarif
           exit-code: "1"
           ignore-unfixed: false
           vuln-type: os,library
           scanners: vuln
           version: v0.74.0
-          severity: CRITICAL,HIGH
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
 
-      - name: Scan latest HAProxy image
-        id: scan_haproxy
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-haproxy:latest
-          format: sarif
-          output: trivy-reports/latest-haproxy-${{ matrix.architecture }}.sarif
-          exit-code: "1"
-          ignore-unfixed: false
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: CRITICAL,HIGH
+      - name: Publish rescan summary
+        if: always()
+        run: python3 shared/ci/security-summary.py
 
-      - name: Scan latest Monero image
-        id: scan_monero
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-monero:latest
-          format: sarif
-          output: trivy-reports/latest-monero-${{ matrix.architecture }}.sarif
-          exit-code: "1"
-          ignore-unfixed: false
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: CRITICAL,HIGH
-
-      - name: Upload latest exit report
+      - name: Upload rescan SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
         with:
-          sarif_file: trivy-reports/latest-exit-${{ matrix.architecture }}.sarif
-          category: mgla-latest-exit-${{ matrix.architecture }}
+          sarif_file: trivy-reports/${{ matrix.image }}-${{ matrix.architecture }}.sarif
+          category: mgla-latest-${{ matrix.image }}-${{ matrix.architecture }}
 
-      - name: Upload latest HAProxy report
-        if: always()
-        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
-        with:
-          sarif_file: trivy-reports/latest-haproxy-${{ matrix.architecture }}.sarif
-          category: mgla-latest-haproxy-${{ matrix.architecture }}
-
-      - name: Upload latest Monero report
-        if: always()
-        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
-        with:
-          sarif_file: trivy-reports/latest-monero-${{ matrix.architecture }}.sarif
-          category: mgla-latest-monero-${{ matrix.architecture }}
-
-      - name: Fail when latest has high or critical findings
+      - name: Fail on latest release blockers
         if: always()
         env:
-          EXIT_SCAN: ${{ steps.scan_exit.outcome }}
-          HAPROXY_SCAN: ${{ steps.scan_haproxy.outcome }}
-          MONERO_SCAN: ${{ steps.scan_monero.outcome }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
         run: |
           set -euo pipefail
-          if [[ "${EXIT_SCAN}" == failure || "${HAPROXY_SCAN}" == failure || "${MONERO_SCAN}" == failure ]]; then
+          if [[ "${SCAN_OUTCOME}" == failure ]]; then
             echo "latest contains a high or critical vulnerability" >&2
             exit 1
           fi

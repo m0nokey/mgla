@@ -1,2 +1,21 @@
-# Local wallet state; never commit private keys.
+# Local wallet state and encrypted vaults; never commit private keys.
 **/wallets/
+**/vault-store/
+**/.electrum/
+*.mgla
+
+# Local build and test output.
+**/target/
+**/__pycache__/
+*.py[cod]
+trivy-reports/
+image-artifacts/
+mgla-images-*.tar.gz
+
+# Local Compose overrides and environment files.
+.env
+.env.*
+!.env.example
+
+# macOS metadata.
+.DS_Store

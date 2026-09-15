@@ -65,8 +65,8 @@ ENV CCACHE_DIR=/ccache
 # Build the memory-safe userspace vault before the large Monero compilation so
 # changes to the wallet launcher do not invalidate this layer.
 WORKDIR /src/vault
-COPY vault/Cargo.toml vault/Cargo.lock ./
-COPY vault/src ./src
+COPY --from=shared vault/Cargo.toml vault/Cargo.lock ./
+COPY --from=shared vault/src ./src
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     cargo test --release --locked \

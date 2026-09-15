@@ -4,7 +4,12 @@ IFS=$'\n\t'
 
 module_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-project="mgla"
+# shellcheck source=../shared/lib/network.sh
+source "${module_dir}/../shared/lib/network.sh"
+
+project="mgla-monero"
+compose_profile="monero"
+image_project="mgla"
 workdir="$(mktemp -d -t "${project}.XXXXXXXX")"
 wallet_store_host_dir="${WALLET_STORE_HOST_DIR:-${WALLET_HOST_DIR:-${HOME}/.mgla}}"
 wallet_vault_size="${WALLET_VAULT_SIZE:-128M}"
@@ -38,9 +43,9 @@ if [[ ! "${image_tag}" =~ ^[[:alnum:]_][[:alnum:]._-]{0,127}$ ]]; then
     exit 1
 fi
 image_registry="${image_registry%/}"
-image_prefix="${project}"
+image_prefix="${image_project}"
 if [[ -n "${image_registry}" ]]; then
-    image_prefix="${image_registry}/${project}"
+    image_prefix="${image_registry}/${image_project}"
 fi
 exit_image="${image_prefix}-exit:${image_tag}"
 haproxy_image="${image_prefix}-haproxy:${image_tag}"
@@ -64,6 +69,7 @@ container_names=(
 )
 
 legacy_project="tor_alpine_monero_test"
+previous_project="mgla"
 legacy_container_names=(
     "tor_monero_test_exit_a"
     "tor_monero_test_exit_b"
@@ -84,113 +90,31 @@ int_network_container_exit_b_ipv4=""
 int_network_container_haproxy_ipv4=""
 int_network_container_app_ipv4=""
 
-compose_file="${module_dir}/compose.yaml"
+compose_file="${module_dir}/../compose.yaml"
 guard_pid=""
 
 compose() {
-    docker compose -p "${project}" -f "${compose_file}" "$@"
+    docker compose -p "${project}" --profile "${compose_profile}" -f "${compose_file}" "$@"
 }
 
-rand_u8() {
-    local min=${1:-0} max=${2:-255}
-    local range=$((max - min + 1))
-    local r=$(( (RANDOM << 15) ^ RANDOM ))
-    printf '%d' $(( (r % range) + min ))
-}
-
-docker_subnets() {
-    local id
-    local -a ids=()
-
-    while IFS= read -r id; do
-        if [[ -n "${id}" ]]; then
-            ids+=("${id}")
-        fi
-    done < <(docker network ls -q 2>/dev/null || true)
-
-    if ((${#ids[@]} == 0)); then
-        return 0
-    fi
-
-    docker network inspect "${ids[@]}" \
-        --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' 2>/dev/null \
-        | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$' || true
-}
-
-cidr_overlaps() {
-    local first="$1" second="$2"
-    awk -v A="${first}" -v B="${second}" '
-    function ip_to_int(ip, octet) {
-        split(ip, octet, ".")
-        return octet[1] * 16777216 + octet[2] * 65536 + octet[3] * 256 + octet[4]
-    }
-    function range(cidr, fields, ip, prefix, block, value, start, end) {
-        split(cidr, fields, "/")
-        ip = fields[1]
-        prefix = fields[2] + 0
-        if (!prefix) prefix = 32
-        block = 2 ^ (32 - prefix)
-        value = ip_to_int(ip)
-        start = int(value / block) * block
-        end = start + block - 1
-        return start ":" end
-    }
-    BEGIN {
-        split(range(A), a, ":")
-        split(range(B), b, ":")
-        exit((a[2] < b[1] || a[1] > b[2]) ? 1 : 0)
-    }'
-}
-
-subnet_free_docker() {
-    local candidate="$1" subnet
-    while read -r subnet; do
-        [[ -z "${subnet}" ]] && continue
-        cidr_overlaps "${candidate}" "${subnet}" && return 1
-    done < <(docker_subnets)
-    return 0
-}
-
-gen_docker_networks() {
-    local mask="${1:-29}"
-    local ext_b ext_c int_b int_c
-
-    # Keep the external and internal ranges apart, as in the original Monero
-    # scenario, while avoiding every subnet already known to Docker.
-    while :; do
-        ext_b="$(rand_u8 19 119)"
-        ext_c="$(rand_u8 0 255)"
-        ext_network_container_subnet_cidr_ipv4="10.${ext_b}.${ext_c}.0/${mask}"
-        subnet_free_docker "${ext_network_container_subnet_cidr_ipv4}" && break
-    done
-    ext_network_container_gateway_ipv4="10.${ext_b}.${ext_c}.1"
-    ext_network_container_exit_a_ipv4="10.${ext_b}.${ext_c}.2"
-    ext_network_container_exit_b_ipv4="10.${ext_b}.${ext_c}.3"
-
-    while :; do
-        int_b="$(rand_u8 121 221)"
-        int_c="$(rand_u8 0 255)"
-        int_network_container_subnet_cidr_ipv4="10.${int_b}.${int_c}.0/${mask}"
-        subnet_free_docker "${int_network_container_subnet_cidr_ipv4}" && break
-    done
-    int_network_container_gateway_ipv4="10.${int_b}.${int_c}.1"
-    int_network_container_exit_a_ipv4="10.${int_b}.${int_c}.2"
-    int_network_container_exit_b_ipv4="10.${int_b}.${int_c}.3"
-    int_network_container_haproxy_ipv4="10.${int_b}.${int_c}.4"
-    int_network_container_app_ipv4="10.${int_b}.${int_c}.5"
-}
 
 cleanup_project() {
     set +e
     if command -v docker >/dev/null 2>&1; then
         if [[ -f "${compose_file}" ]]; then
-            docker compose -p "${project}" -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+            docker compose -p "${project}" --profile "${compose_profile}" -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
         fi
         for name in "${cleanup_container_names[@]}"; do
             docker rm -f "${name}" >/dev/null 2>&1 || true
         done
-        docker network rm "${project}_external_network" "${project}_internal_network" "${legacy_project}_external_network" "${legacy_project}_internal_network" >/dev/null 2>&1 || true
-        docker volume rm -f "${project}_exit_a_run" "${project}_exit_b_run" "${legacy_project}_exit_a_run" "${legacy_project}_exit_b_run" >/dev/null 2>&1 || true
+        docker network rm \
+            "${project}_external_network" "${project}_internal_network" \
+            "${previous_project}_external_network" "${previous_project}_internal_network" \
+            "${legacy_project}_external_network" "${legacy_project}_internal_network" >/dev/null 2>&1 || true
+        docker volume rm -f \
+            "${project}_exit_a_run" "${project}_exit_b_run" \
+            "${previous_project}_exit_a_run" "${previous_project}_exit_b_run" \
+            "${legacy_project}_exit_a_run" "${legacy_project}_exit_b_run" >/dev/null 2>&1 || true
     fi
     set -e
 }
@@ -202,13 +126,14 @@ start_guard() {
 set +e
 project="$1"
 compose_file="$2"
-parent="$3"
-containers_str="${4:-}"
+profile="$3"
+parent="$4"
+containers_str="${5:-}"
 while kill -0 "${parent}" >/dev/null 2>&1; do
     sleep 1
 done
 if command -v docker >/dev/null 2>&1; then
-    docker compose -p "${project}" -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    docker compose -p "${project}" --profile "${profile}" -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
     for name in ${containers_str}; do
         docker rm -f "${name}" >/dev/null 2>&1 || true
     done
@@ -218,9 +143,9 @@ fi
 EOS
     chmod +x "${guard}"
     if command -v setsid >/dev/null 2>&1; then
-        setsid sh "${guard}" "${project}" "${compose_file}" "$$" "${cleanup_container_names[*]}" >/dev/null 2>&1 &
+        setsid sh "${guard}" "${project}" "${compose_file}" "${profile}" "$$" "${cleanup_container_names[*]}" >/dev/null 2>&1 &
     else
-        nohup sh "${guard}" "${project}" "${compose_file}" "$$" "${cleanup_container_names[*]}" >/dev/null 2>&1 &
+        nohup sh "${guard}" "${project}" "${compose_file}" "${profile}" "$$" "${cleanup_container_names[*]}" >/dev/null 2>&1 &
     fi
     guard_pid="$!"
 }
@@ -237,7 +162,7 @@ cleanup() {
     stop_guard
     if command -v docker >/dev/null 2>&1; then
         if [[ -f "${compose_file}" ]]; then
-            docker compose -p "${project}" -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+            docker compose -p "${project}" --profile "${compose_profile}" -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
         fi
         for name in "${cleanup_container_names[@]}"; do
             docker rm -f "${name}" >/dev/null 2>&1 || true
@@ -295,7 +220,7 @@ if [[ ! "${monero_commit}" =~ ^[0-9a-fA-F]{40}$ ]]; then
     exit 1
 fi
 
-gen_docker_networks 29
+generate_networks
 echo "[info] external network: ${ext_network_container_subnet_cidr_ipv4}"
 echo "[info] internal network: ${int_network_container_subnet_cidr_ipv4}"
 echo "[info] Monero release: ${monero_version}"
