@@ -1,0 +1,170 @@
+services:
+  exit_a:
+    container_name: ${exit_a_container}
+    image: ${exit_image:-mgla-exit:latest}
+    logging:
+      driver: "none"
+    build:
+      context: ../monero/docker/exit
+      dockerfile: Dockerfile
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
+    cap_drop: ["ALL"]
+    read_only: true
+    ipc: none
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      EXIT_IP: "${int_network_container_exit_a_ipv4}"
+      HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777
+      - /var/lib/tor:rw,nosuid,nodev,noexec,mode=1777
+    volumes:
+      - exit_a_run:/run/tor
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck"]
+      interval: 30s
+      timeout: 15s
+      retries: 8
+      start_period: 180s
+    networks:
+      external_network:
+        ipv4_address: ${ext_network_container_exit_a_ipv4}
+      internal_network:
+        ipv4_address: ${int_network_container_exit_a_ipv4}
+
+  exit_b:
+    container_name: ${exit_b_container}
+    image: ${exit_image:-mgla-exit:latest}
+    logging:
+      driver: "none"
+    build:
+      context: ../monero/docker/exit
+      dockerfile: Dockerfile
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
+    cap_drop: ["ALL"]
+    read_only: true
+    ipc: none
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      EXIT_IP: "${int_network_container_exit_b_ipv4}"
+      HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777
+      - /var/lib/tor:rw,nosuid,nodev,noexec,mode=1777
+    volumes:
+      - exit_b_run:/run/tor
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck"]
+      interval: 30s
+      timeout: 15s
+      retries: 8
+      start_period: 180s
+    networks:
+      external_network:
+        ipv4_address: ${ext_network_container_exit_b_ipv4}
+      internal_network:
+        ipv4_address: ${int_network_container_exit_b_ipv4}
+
+  haproxy:
+    container_name: ${haproxy_container}
+    image: ${haproxy_image:-mgla-haproxy:latest}
+    logging:
+      driver: "none"
+    build:
+      context: ../monero/docker/haproxy
+      dockerfile: Dockerfile
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 2s
+    cap_drop: ["ALL"]
+    read_only: true
+    ipc: none
+    pids_limit: 100
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
+      EXIT_A_IP: "${int_network_container_exit_a_ipv4}"
+      EXIT_B_IP: "${int_network_container_exit_b_ipv4}"
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777
+      - /run:rw,nosuid,nodev,noexec,mode=0755
+    depends_on:
+      - exit_a
+      - exit_b
+    volumes:
+      - exit_a_run:/run/tor_a:ro
+      - exit_b_run:/run/tor_b:ro
+    networks:
+      internal_network:
+        ipv4_address: ${int_network_container_haproxy_ipv4}
+
+  bitcoin:
+    container_name: ${bitcoin_container}
+    image: ${bitcoin_image:-mgla-bitcoin:latest}
+    logging:
+      driver: "none"
+    build:
+      context: .
+      dockerfile: docker/bitcoin/Dockerfile
+      args:
+        ALPINE_VERSION: "${alpine_version}"
+        ELECTRUM_VERSION: "${electrum_version}"
+        ELECTRUM_ARCHIVE_SHA256: "${electrum_archive_sha256}"
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 10s
+    user: "1000:1000"
+    cap_drop: ["ALL"]
+    read_only: true
+    ipc: none
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: "1.0"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HAPROXY_IP: "${int_network_container_haproxy_ipv4}"
+      HOME: /home/electrum
+      ELECTRUMDIR: /home/electrum/.electrum
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777
+      - /run:rw,nosuid,nodev,noexec,mode=0755
+    volumes:
+      - "${wallet_store_host_dir}:/home/electrum/.electrum:rw"
+    healthcheck:
+      test: ["CMD", "/opt/venv/bin/electrum", "--offline", "--version"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      - haproxy
+    networks:
+      internal_network:
+        ipv4_address: ${int_network_container_bitcoin_ipv4}
+
+networks:
+  external_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${ext_network_container_subnet_cidr_ipv4}
+          gateway: ${ext_network_container_gateway_ipv4}
+  internal_network:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: ${int_network_container_subnet_cidr_ipv4}
+          gateway: ${int_network_container_gateway_ipv4}
+
+volumes:
+  exit_a_run:
+  exit_b_run:

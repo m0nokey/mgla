@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!entrypoint.sh
+!healthcheck.sh
+!tor-control.py
+!torrc.template
