@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-project_dir="$(cd -- "$(dirname -- "$BASH_SOURCE")" && pwd)"
+project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 monero_launcher="$project_dir/monero/monero-cli.sh"
 
 clear_menu() {
@@ -11,11 +11,7 @@ clear_menu() {
 }
 
 pause_for_input() {
-    local prompt='Press Enter to continue...'
-    if (( $# > 0 )); then
-        prompt="$1"
-    fi
-    printf '%s' "$prompt"
+    printf '%s' 'Press Enter to continue...'
     IFS= read -r _ || true
 }
 
