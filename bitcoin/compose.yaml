@@ -123,7 +123,7 @@ services:
     init: true
     stop_signal: SIGTERM
     stop_grace_period: 10s
-    user: "1000:1000"
+    user: "${bitcoin_container_uid:-1000}:${bitcoin_container_gid:-1000}"
     cap_drop: ["ALL"]
     read_only: true
     ipc: none

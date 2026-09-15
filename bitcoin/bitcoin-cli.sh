@@ -81,6 +81,8 @@ exit_a_container="mgla-exit-a"
 exit_b_container="mgla-exit-b"
 haproxy_container="mgla-haproxy"
 bitcoin_container="mgla-bitcoin"
+bitcoin_container_uid=""
+bitcoin_container_gid=""
 
 container_names=(
     "${exit_a_container}"
@@ -117,6 +119,18 @@ compose() {
 
 need() {
     command -v "${1}" >/dev/null 2>&1 || die "missing command: ${1}"
+}
+
+set_container_identity() {
+    local uid gid
+
+    uid="$(id -u)"
+    gid="$(id -g)"
+    if [[ ! "${uid}" =~ ^[1-9][0-9]*$ || ! "${gid}" =~ ^[1-9][0-9]*$ ]]; then
+        die 'the launcher must run as a non-root user'
+    fi
+    bitcoin_container_uid="${uid}"
+    bitcoin_container_gid="${gid}"
 }
 
 docker_subnets() {
@@ -423,6 +437,7 @@ export_runtime_config() {
     export exit_image haproxy_image bitcoin_image
     export alpine_version electrum_version electrum_archive_sha256
     export wallet_store_host_dir
+    export bitcoin_container_uid bitcoin_container_gid
     export ext_network_container_subnet_cidr_ipv4
     export ext_network_container_gateway_ipv4
     export ext_network_container_exit_a_ipv4
@@ -448,6 +463,7 @@ main() {
     cleanup_stack
 
     generate_networks
+    set_container_identity
     export_runtime_config
 
     info "external network: ${ext_network_container_subnet_cidr_ipv4}"
