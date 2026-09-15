@@ -162,9 +162,11 @@ cleanup() {
 trap cleanup EXIT
 trap on_signal INT TERM HUP QUIT
 
-if tty_available; then
-    original_stty="$(stty -g < /dev/tty 2>/dev/null || true)"
-    stty -echoctl < /dev/tty 2>/dev/null || true
+if [[ -t 0 && -t 1 && -r /dev/tty && -w /dev/tty ]]; then
+    if original_stty="$(stty -g < /dev/tty 2>/dev/null)"; then
+        tty_is_tty=1
+        stty -echoctl < /dev/tty >/dev/null 2>&1 || true
+    fi
 fi
 
 read_line() {
@@ -324,7 +326,7 @@ json_number_value() {
 
 set_config() {
     local key="$1" value="$2"
-    electrum_probe setconfig "${key}" "${value}" >/dev/null 2>&1
+    electrum_probe --offline setconfig "${key}" "${value}" >/dev/null 2>&1
 }
 
 current_server() {

@@ -156,8 +156,7 @@ cidr_overlaps() {
     awk -v first="${first}" -v second="${second}" '
         function ip_to_int(ip, octets) {
             split(ip, octets, ".")
-            return octets[1] * 16777216 + octets[2] * 65536 +
-                octets[3] * 256 + octets[4]
+            return octets[1] * 16777216 + octets[2] * 65536 + octets[3] * 256 + octets[4]
         }
         function cidr_range(cidr, fields, ip, prefix, block, value, start, end) {
             split(cidr, fields, "/")
