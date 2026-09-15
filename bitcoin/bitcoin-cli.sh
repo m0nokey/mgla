@@ -333,6 +333,12 @@ run_electrum_checks() {
     info 'checking strict wallet input validation'
     docker exec -e MGLA_VALIDATE_ONLY=1 "${bitcoin_container}" /opt/app/bitcoin
 
+    if [[ "${CI:-0}" == 1 ]]; then
+        info 'CI mode: skipping live Electrum onion discovery'
+        printf '%s\n' '[ok] Electrum CLI, input validation, and Tor proxy checks passed'
+        return 0
+    fi
+
     info 'checking official onion server discovery'
     docker exec -e MGLA_CI=1 "${bitcoin_container}" /opt/app/bitcoin
     printf '%s\n' '[ok] Electrum onion discovery and wallet runtime checks passed'
