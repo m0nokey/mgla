@@ -47,13 +47,16 @@ bash monero/monero-cli.sh
 ```
 
 The host stores encrypted wallet vault files in `$HOME/.mgla/`. Each vault
-has a default capacity of 128 MB and can contain multiple named wallets:
+has a fixed image size of 128 MiB and can contain multiple named wallets:
 
 ```text
 $HOME/.mgla/
 ├── personal.mgla
 └── savings.mgla
 ```
+
+New vaults use the current fixed-size format and are exactly the requested size.
+Vault files created by older builds are not migrated automatically.
 
 The startup menu lists the existing `.mgla` files, lets you open one, or lets
 you create a new vault. To use another host directory:
@@ -144,8 +147,8 @@ Alpine builder, following the dependency model maintained by Alpine's official
 the daemon, RPC server, GUI, tests, and debug utilities are not built. The
 binary architecture and all runtime links are checked before the disposable
 builder stage is discarded. The Rust `mgla-vault` utility is tested in the same
-builder and uses system OpenSSL for AES-256-XTS, libsodium for Argon2id, and a
-separate HMAC-SHA-256 authentication tag. It stores no cleartext format header
+builder and uses system OpenSSL for AES-256-XTS, libsodium for Argon2id, and
+authenticated HMAC-SHA-256 integrity protection. It stores no cleartext format header
 and never creates a block device or mount. Trezor support is intentionally
 disabled in this minimal first version and can be added as a separate module
 option.

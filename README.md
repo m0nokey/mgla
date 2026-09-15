@@ -91,7 +91,7 @@ to Compose at runtime. They are not embedded in the published images.
 ## Wallet Storage
 
 Monero stores fixed-size encrypted vault files in the host directory
-`$HOME/.mgla/`. Each vault has a default capacity of 128 MB and can contain
+`$HOME/.mgla/`. Each vault has a fixed image size of 128 MiB and can contain
 multiple named wallets:
 
 ```text
@@ -99,6 +99,9 @@ $HOME/.mgla/
 ├── personal.mgla
 └── savings.mgla
 ```
+
+New vaults use the current fixed-size format and are exactly the requested size.
+Vault files created by older builds are not migrated automatically.
 
 At startup, the menu lists the existing `.mgla` files and allows you to open one
 or create a new vault. To use another host directory:

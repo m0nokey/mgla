@@ -28,18 +28,18 @@ type VaultResult<T> = Result<T, Box<dyn Error>>;
 const SECTOR_SIZE: usize = 4096;
 const TAG_SIZE: usize = 32;
 const SALT_SIZE: usize = 16;
+const ENVELOPE_SECTOR_SIZE: usize = SECTOR_SIZE;
+const ENVELOPE_SALT_OFFSET: usize = SECTOR_SIZE / 8;
+const ENVELOPE_TAG_OFFSET: usize = SECTOR_SIZE * 5 / 8;
 const INNER_HEADER_SIZE: usize = 64;
 const XTS_KEY_SIZE: usize = 64;
 const MAC_KEY_SIZE: usize = 32;
 const KEY_MATERIAL_SIZE: usize = XTS_KEY_SIZE + MAC_KEY_SIZE;
 const PASSWORD_MAX: usize = 512;
-const MAX_DATA_SIZE: u64 = 16 * 1024 * 1024 * 1024;
-const ARGON2ID_OPSLIMIT_V1: u64 = 3;
-const ARGON2ID_MEMLIMIT_V1: usize = 64 * 1024 * 1024;
-const ARGON2ID_OPSLIMIT_V2: u64 = 4;
-const ARGON2ID_MEMLIMIT_V2: usize = 1024 * 1024 * 1024;
+const MAX_VAULT_SIZE: u64 = 16 * 1024 * 1024 * 1024;
+const ARGON2ID_OPSLIMIT: u64 = 4;
+const ARGON2ID_MEMLIMIT: usize = 1024 * 1024 * 1024;
 const ARGON2ID_ALGORITHM: c_int = 2;
-const LEGACY_KDF_SALT: [u8; SALT_SIZE] = *b"mgla-raw-v1-kdf!";
 const GENERATED_PASSWORD_CORE_LENGTH: usize = 47;
 const GENERATED_PASSWORD_LENGTH: usize = GENERATED_PASSWORD_CORE_LENGTH + 1;
 const GENERATED_PASSWORD_MIN_SPECIALS: usize = 7;
@@ -47,11 +47,9 @@ const GENERATED_PASSWORD_LETTERS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij
 const GENERATED_PASSWORD_ALPHABET: &[u8] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789<>*+!?_=#@%&";
 const GENERATED_PASSWORD_SPECIALS: &[u8] = b"<>*+!?_=#@%&";
-const HMAC_CONTEXT_V1: &[u8] = b"MGLA-RAW-V1-HMAC";
-const HMAC_CONTEXT_V2: &[u8] = b"MGLA-RAW-V2-HMAC";
-const INNER_MAGIC: &[u8] = b"MGLA-RAW-V1";
-const FORMAT_VERSION_V1: u32 = 1;
-const FORMAT_VERSION_V2: u32 = 2;
+const HMAC_CONTEXT: &[u8] = b"MGLA-RAW-V3-HMAC";
+const INNER_MAGIC: &[u8] = b"MGLA-RAW-V3";
+const FORMAT_VERSION: u32 = 3;
 
 #[link(name = "sodium")]
 unsafe extern "C" {
@@ -112,12 +110,23 @@ fn invalid_data(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
+fn validate_vault_size(image_size: u64) -> VaultResult<u64> {
+    let minimum_size = (ENVELOPE_SECTOR_SIZE + SECTOR_SIZE) as u64;
+    if image_size < minimum_size
+        || image_size > MAX_VAULT_SIZE
+        || !image_size.is_multiple_of(SECTOR_SIZE as u64)
+    {
+        return Err(invalid("vault size must be sector-aligned between 8K and 16G").into());
+    }
+    Ok(image_size)
+}
+
 fn validate_data_size(data_size: u64) -> VaultResult<u64> {
     if data_size < SECTOR_SIZE as u64
-        || data_size > MAX_DATA_SIZE
+        || data_size > MAX_VAULT_SIZE - ENVELOPE_SECTOR_SIZE as u64
         || !data_size.is_multiple_of(SECTOR_SIZE as u64)
     {
-        return Err(invalid("vault size must be a sector-aligned value between 4K and 16G").into());
+        return Err(invalid("vault payload size is invalid").into());
     }
     Ok(data_size)
 }
@@ -136,42 +145,28 @@ fn parse_size(text: &str) -> VaultResult<u64> {
     };
 
     let value: u64 = digits.parse().map_err(|_| invalid("invalid vault size"))?;
-    let data_size = value
+    let image_size = value
         .checked_mul(multiplier)
         .ok_or_else(|| invalid("vault size is too large"))?;
-    validate_data_size(data_size)
+    validate_vault_size(image_size)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum VaultFormat {
-    LegacyV1,
-    CurrentV2,
+    CurrentV3,
 }
 
 impl VaultFormat {
     fn version(self) -> u32 {
-        match self {
-            Self::LegacyV1 => FORMAT_VERSION_V1,
-            Self::CurrentV2 => FORMAT_VERSION_V2,
-        }
+        FORMAT_VERSION
     }
 
     fn hmac_context(self) -> &'static [u8] {
-        match self {
-            Self::LegacyV1 => HMAC_CONTEXT_V1,
-            Self::CurrentV2 => HMAC_CONTEXT_V2,
-        }
+        HMAC_CONTEXT
     }
 
     fn kdf_parameters(self) -> (u64, usize) {
-        match self {
-            Self::LegacyV1 => (ARGON2ID_OPSLIMIT_V1, ARGON2ID_MEMLIMIT_V1),
-            Self::CurrentV2 => (ARGON2ID_OPSLIMIT_V2, ARGON2ID_MEMLIMIT_V2),
-        }
-    }
-
-    fn has_clear_salt(self) -> bool {
-        matches!(self, Self::CurrentV2)
+        (ARGON2ID_OPSLIMIT, ARGON2ID_MEMLIMIT)
     }
 }
 
@@ -185,30 +180,37 @@ struct VaultLayout {
 }
 
 impl VaultLayout {
-    fn current(data_size: u64) -> VaultResult<Self> {
+    fn current(image_size: u64) -> VaultResult<Self> {
+        validate_vault_size(image_size)?;
+        let data_size = image_size
+            .checked_sub(ENVELOPE_SECTOR_SIZE as u64)
+            .ok_or_else(|| invalid("vault size is too small"))?;
         validate_data_size(data_size)?;
-        let image_size = data_size
-            .checked_add((SALT_SIZE + TAG_SIZE) as u64)
-            .ok_or_else(|| invalid("vault size is too large"))?;
         let mut salt = [0u8; SALT_SIZE];
         rand_bytes(&mut salt)?;
         Ok(Self {
-            format: VaultFormat::CurrentV2,
+            format: VaultFormat::CurrentV3,
             image_size,
             data_size,
-            data_offset: SALT_SIZE as u64,
+            data_offset: ENVELOPE_SECTOR_SIZE as u64,
             salt,
         })
     }
 
-    fn legacy(image_size: u64, data_size: u64) -> Self {
-        Self {
-            format: VaultFormat::LegacyV1,
+    fn from_image(image_size: u64, salt: [u8; SALT_SIZE]) -> VaultResult<Self> {
+        validate_vault_size(image_size)?;
+        let data_size = image_size
+            .checked_sub(ENVELOPE_SECTOR_SIZE as u64)
+            .ok_or_else(|| invalid_data("vault file is too small"))?;
+        validate_data_size(data_size)
+            .map_err(|_| invalid_data("vault file has an invalid size"))?;
+        Ok(Self {
+            format: VaultFormat::CurrentV3,
             image_size,
             data_size,
-            data_offset: 0,
-            salt: LEGACY_KDF_SALT,
-        }
+            data_offset: ENVELOPE_SECTOR_SIZE as u64,
+            salt,
+        })
     }
 }
 
@@ -218,36 +220,15 @@ fn inspect_image(path: &Path) -> VaultResult<VaultLayout> {
         return Err(invalid_data("vault path is not a regular file").into());
     }
     let image_size = metadata.len();
-    let current_overhead = (SALT_SIZE + TAG_SIZE) as u64;
-    if image_size >= current_overhead + SECTOR_SIZE as u64
-        && (image_size - current_overhead).is_multiple_of(SECTOR_SIZE as u64)
-    {
-        let data_size = image_size - current_overhead;
-        validate_data_size(data_size)
-            .map_err(|_| invalid_data("vault file has an invalid size"))?;
-        let mut file = File::open(path)?;
-        let mut salt = [0u8; SALT_SIZE];
-        file.read_exact(&mut salt)?;
-        return Ok(VaultLayout {
-            format: VaultFormat::CurrentV2,
-            image_size,
-            data_size,
-            data_offset: SALT_SIZE as u64,
-            salt,
-        });
-    }
+    validate_vault_size(image_size).map_err(|_| invalid_data("vault file has an invalid size"))?;
 
-    let legacy_overhead = TAG_SIZE as u64;
-    if image_size >= legacy_overhead + SECTOR_SIZE as u64
-        && (image_size - legacy_overhead).is_multiple_of(SECTOR_SIZE as u64)
-    {
-        let data_size = image_size - legacy_overhead;
-        validate_data_size(data_size)
-            .map_err(|_| invalid_data("vault file has an invalid size"))?;
-        return Ok(VaultLayout::legacy(image_size, data_size));
-    }
-
-    Err(invalid_data("vault file has an invalid size").into())
+    let mut file = File::open(path)?;
+    let mut envelope = [0u8; ENVELOPE_SECTOR_SIZE];
+    file.read_exact(&mut envelope)?;
+    let mut salt = [0u8; SALT_SIZE];
+    salt.copy_from_slice(&envelope[ENVELOPE_SALT_OFFSET..ENVELOPE_SALT_OFFSET + SALT_SIZE]);
+    envelope.zeroize();
+    VaultLayout::from_image(image_size, salt)
 }
 
 fn read_password(fd: i32) -> VaultResult<Zeroizing<Vec<u8>>> {
@@ -315,10 +296,12 @@ fn new_mac(key: &[u8; MAC_KEY_SIZE], layout: &VaultLayout) -> VaultResult<HmacSh
         HmacSha256::new_from_slice(key).map_err(|_| io::Error::other("cannot initialize HMAC"))?;
     mac.update(layout.format.hmac_context());
     mac.update(&layout.image_size.to_le_bytes());
-    if layout.format.has_clear_salt() {
-        mac.update(&layout.salt);
-    }
     Ok(mac)
+}
+
+fn update_envelope_mac(mac: &mut HmacSha256, envelope: &[u8; ENVELOPE_SECTOR_SIZE]) {
+    mac.update(&envelope[..ENVELOPE_TAG_OFFSET]);
+    mac.update(&envelope[ENVELOPE_TAG_OFFSET + TAG_SIZE..]);
 }
 
 fn constant_time_tag_matches(expected: &[u8], actual: &[u8; TAG_SIZE]) -> bool {
@@ -639,8 +622,12 @@ fn pack_image(
     }
     if !create_new {
         let existing = inspect_image(image)?;
-        if existing.data_size != data_size {
-            return Err(invalid("vault size cannot change during pack").into());
+        if existing.format != layout.format
+            || existing.image_size != layout.image_size
+            || existing.data_size != data_size
+            || existing.salt != layout.salt
+        {
+            return Err(invalid_data("vault image changed during pack").into());
         }
     }
 
@@ -651,10 +638,15 @@ fn pack_image(
     let archive_size = archive.metadata()?.len();
     let (temporary_path, mut output) = temporary_image_path(image)?;
     let result = (|| -> VaultResult<()> {
+        let mut envelope = Zeroizing::new([0u8; ENVELOPE_SECTOR_SIZE]);
+        rand_bytes(&mut envelope[..])?;
+        envelope[ENVELOPE_SALT_OFFSET..ENVELOPE_SALT_OFFSET + SALT_SIZE]
+            .copy_from_slice(&layout.salt);
+
         let mut mac = new_mac(&keys.mac, layout)?;
-        if layout.format.has_clear_salt() {
-            output.write_all(&layout.salt)?;
-        }
+        update_envelope_mac(&mut mac, &*envelope);
+        output.write_all(&*envelope)?;
+
         let sector_count = data_size / SECTOR_SIZE as u64;
         let mut archive_remaining = archive_size;
         let mut plaintext = Zeroizing::new([0u8; SECTOR_SIZE]);
@@ -689,7 +681,11 @@ fn pack_image(
         }
 
         let tag = mac.finalize().into_bytes();
+        output.seek(SeekFrom::Start(ENVELOPE_TAG_OFFSET as u64))?;
         output.write_all(&tag)?;
+        if output.metadata()?.len() != layout.image_size {
+            return Err(invalid_data("vault image has an unexpected size").into());
+        }
         output.sync_all()?;
         Ok(())
     })();
@@ -704,19 +700,24 @@ fn pack_image(
 }
 
 fn verify_image(file: &mut File, layout: &VaultLayout, keys: &Keys) -> VaultResult<()> {
-    if layout.format.has_clear_salt() {
-        file.seek(SeekFrom::Start(0))?;
-        let mut stored_salt = [0u8; SALT_SIZE];
-        file.read_exact(&mut stored_salt)?;
-        let salt_matches = layout.salt.ct_eq(stored_salt.as_slice()).unwrap_u8() == 1;
-        stored_salt.zeroize();
-        if !salt_matches {
-            return Err(invalid_data("vault salt does not match its layout").into());
-        }
+    file.seek(SeekFrom::Start(0))?;
+    let mut envelope = Zeroizing::new([0u8; ENVELOPE_SECTOR_SIZE]);
+    file.read_exact(&mut envelope[..])?;
+
+    let mut stored_salt = [0u8; SALT_SIZE];
+    stored_salt.copy_from_slice(&envelope[ENVELOPE_SALT_OFFSET..ENVELOPE_SALT_OFFSET + SALT_SIZE]);
+    let salt_matches = layout.salt.ct_eq(stored_salt.as_slice()).unwrap_u8() == 1;
+    stored_salt.zeroize();
+    if !salt_matches {
+        return Err(invalid_data("vault salt does not match its layout").into());
     }
 
-    file.seek(SeekFrom::Start(layout.data_offset))?;
+    let mut actual = [0u8; TAG_SIZE];
+    actual.copy_from_slice(&envelope[ENVELOPE_TAG_OFFSET..ENVELOPE_TAG_OFFSET + TAG_SIZE]);
     let mut mac = new_mac(&keys.mac, layout)?;
+    update_envelope_mac(&mut mac, &*envelope);
+
+    file.seek(SeekFrom::Start(layout.data_offset))?;
     let mut buffer = [0u8; 64 * 1024];
     let mut remaining = layout.data_size;
     while remaining > 0 {
@@ -725,8 +726,7 @@ fn verify_image(file: &mut File, layout: &VaultLayout, keys: &Keys) -> VaultResu
         mac.update(&buffer[..wanted]);
         remaining -= wanted as u64;
     }
-    let mut actual = [0u8; TAG_SIZE];
-    file.read_exact(&mut actual)?;
+
     let mut expected = mac.finalize().into_bytes().to_vec();
     let matches = constant_time_tag_matches(&expected, &actual);
     buffer.zeroize();
@@ -1099,7 +1099,7 @@ fn read_tty_confirmation(tty: &mut File) -> VaultResult<bool> {
 
 fn prepare_generated_vault(
     image: &Path,
-    data_size: u64,
+    image_size: u64,
     source: &Path,
 ) -> VaultResult<(VaultLayout, LockedKeys)> {
     if fs::symlink_metadata(image).is_ok() {
@@ -1123,28 +1123,35 @@ fn prepare_generated_vault(
     tty.flush()?;
     drop(tty);
 
-    let layout = VaultLayout::current(data_size)?;
+    let layout = VaultLayout::current(image_size)?;
     let raw_keys = derive_keys(&password, &layout)?;
     let keys = LockedKeys::new(raw_keys)?;
     drop(password);
-    pack_image(image, data_size, source, &layout, keys.as_ref(), true)?;
+    pack_image(
+        image,
+        layout.data_size,
+        source,
+        &layout,
+        keys.as_ref(),
+        true,
+    )?;
     Ok((layout, keys))
 }
 
-fn create_generated_vault(image: &Path, data_size: u64, source: &Path) -> VaultResult<()> {
-    let (_layout, _keys) = prepare_generated_vault(image, data_size, source)?;
+fn create_generated_vault(image: &Path, image_size: u64, source: &Path) -> VaultResult<()> {
+    let (_layout, _keys) = prepare_generated_vault(image, image_size, source)?;
     Ok(())
 }
 
 #[cfg(unix)]
 fn create_generated_vault_session(
     image: &Path,
-    data_size: u64,
+    image_size: u64,
     source: &Path,
     wallet_root: &Path,
     socket: &Path,
 ) -> VaultResult<()> {
-    let (layout, keys) = prepare_generated_vault(image, data_size, source)?;
+    let (layout, keys) = prepare_generated_vault(image, image_size, source)?;
     let listener = bind_session_socket(socket)?;
     let session = VaultSession {
         image: image.to_owned(),
@@ -1177,9 +1184,9 @@ fn run() -> VaultResult<()> {
             }
 
             let image = Path::new(&arguments[1]);
-            let data_size = parse_size(&arguments[2])?;
+            let image_size = parse_size(&arguments[2])?;
             let source = Path::new(&arguments[3]);
-            return create_generated_vault(image, data_size, source);
+            return create_generated_vault(image, image_size, source);
         }
         Some("session-open") => {
             if arguments.len() != 4 {
@@ -1200,11 +1207,11 @@ fn run() -> VaultResult<()> {
             }
 
             let image = Path::new(&arguments[1]);
-            let data_size = parse_size(&arguments[2])?;
+            let image_size = parse_size(&arguments[2])?;
             let source = Path::new(&arguments[3]);
             let wallet_root = Path::new(&arguments[4]);
             let socket = Path::new(&arguments[5]);
-            return create_generated_vault_session(image, data_size, source, wallet_root, socket);
+            return create_generated_vault_session(image, image_size, source, wallet_root, socket);
         }
         Some("session-request") => {
             if arguments.len() != 3 {
@@ -1265,20 +1272,16 @@ fn run() -> VaultResult<()> {
     let result: VaultResult<()> = (|| match command {
         "create" => {
             let image = Path::new(&arguments[command_index + 1]);
-            let data_size = parse_size(&arguments[command_index + 2])?;
+            let image_size = parse_size(&arguments[command_index + 2])?;
             let source = Path::new(&arguments[command_index + 3]);
-            let layout = VaultLayout::current(data_size)?;
+            let layout = VaultLayout::current(image_size)?;
             let keys = derive_keys(&password, &layout)?;
-            pack_image(image, data_size, source, &layout, &keys, true)
+            pack_image(image, layout.data_size, source, &layout, &keys, true)
         }
         "pack" => {
             let image = Path::new(&arguments[command_index + 1]);
             let source = Path::new(&arguments[command_index + 2]);
-            let existing = inspect_image(image)?;
-            let layout = match existing.format {
-                VaultFormat::LegacyV1 => VaultLayout::current(existing.data_size)?,
-                VaultFormat::CurrentV2 => existing,
-            };
+            let layout = inspect_image(image)?;
             let keys = derive_keys(&password, &layout)?;
             pack_image(image, layout.data_size, source, &layout, &keys, false)
         }
@@ -1331,6 +1334,8 @@ mod tests {
         assert!(parse_size("256M")
             .unwrap()
             .is_multiple_of(SECTOR_SIZE as u64));
+        assert!(parse_size("8K").is_ok());
+        assert!(parse_size("4K").is_err());
         assert!(parse_size("4097").is_err());
     }
 
@@ -1346,8 +1351,10 @@ mod tests {
         let first = VaultLayout::current(1024 * 1024).expect("first layout");
         let second = VaultLayout::current(1024 * 1024).expect("second layout");
         assert_ne!(first.salt, second.salt);
-        assert_eq!(first.data_size, second.data_size);
+        assert_eq!(first.image_size, 1024 * 1024);
+        assert_eq!(first.data_size, 1024 * 1024 - ENVELOPE_SECTOR_SIZE as u64);
         assert_eq!(first.image_size, second.image_size);
+        assert_eq!(first.data_offset, ENVELOPE_SECTOR_SIZE as u64);
     }
 
     #[test]
@@ -1383,6 +1390,14 @@ mod tests {
         let keys = test_keys();
         let layout = VaultLayout::current(1024 * 1024).expect("current layout");
         pack_image(&image, layout.data_size, &source, &layout, &keys, true).expect("pack image");
+        assert_eq!(
+            fs::metadata(&image).expect("image metadata").len(),
+            layout.image_size
+        );
+        let inspected = inspect_image(&image).expect("inspect image");
+        assert_eq!(inspected.image_size, layout.image_size);
+        assert_eq!(inspected.data_size, layout.data_size);
+        assert_eq!(inspected.salt, layout.salt);
         unpack_image(&image, &destination, &layout, &keys).expect("unpack image");
         assert_eq!(
             fs::read(destination.join("alice/wallet.keys")).expect("unpacked wallet"),
