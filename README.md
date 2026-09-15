@@ -112,8 +112,16 @@ shows it once. Save it offline: losing it means losing access to that vault.
 Wallet seed phrases can restore wallets, but they do not restore local wallet
 cache and labels. The host receives only encrypted vault files; wallets are
 opened inside the Monero container in a private tmpfs and removed when the
-launcher exits. The Rust vault process generates and prompts for vault
-passwords directly through `/dev/tty`; the Bash launcher does not retain them.
+launcher exits.
+
+The vault menu provides two unlock modes. `Prompt` asks for the vault password
+for every open and save and discards the derived key after each operation.
+`Session` asks once and keeps only the derived key in locked memory until the
+launcher exits. Communication with the Rust vault process uses a private Unix
+socket; the plaintext password is not kept in the Bash launcher. Normal exit
+packs dirty wallet data before erasing the session key. A forced kill or power
+loss can lose only changes not yet packed; the previous encrypted image stays
+intact.
 
 ## Security Model
 

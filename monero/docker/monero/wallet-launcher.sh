@@ -41,6 +41,9 @@ cleanup() {
     if declare -F save_vault >/dev/null 2>&1 && [[ "${vault_loaded:-0}" -eq 1 ]]; then
         save_vault || true
     fi
+    if declare -F stop_vault_session >/dev/null 2>&1; then
+        stop_vault_session || true
+    fi
     if declare -F clear_wallet_root >/dev/null 2>&1; then
         clear_wallet_root
     fi
@@ -103,6 +106,10 @@ vault_file=""
 vault_host_path=""
 vault_loaded=0
 vault_dirty=0
+vault_mode="${MGLA_VAULT_MODE:-}"
+vault_session_dir=""
+vault_session_socket=""
+vault_session_pid=""
 daemon_mode="${daemon_mode:-untrusted}"
 
 if [[ -z "${HAPROXY_IP:-}" ]]; then
@@ -170,6 +177,165 @@ vault_with_tty_password() {
     "$vault_binary" --tty-password "$@"
 }
 
+choose_vault_mode() {
+    local choice
+
+    case "${vault_mode}" in
+        prompt|session)
+            return 0
+            ;;
+    esac
+
+    while true; do
+        clear_screen
+        tty_print "Vault unlock mode"
+        tty_print "------------------------------------------------------------"
+        tty_print "Choose how the vault key is held while this launcher is running."
+        tty_blank
+        tty_print "1. Prompt"
+        tty_print "   Ask for the vault password on every open and save."
+        tty_print "   The derived key is discarded after each operation."
+        tty_blank
+        tty_print "2. Session"
+        tty_print "   Enter the password once and keep only the derived key"
+        tty_print "   in locked memory until the launcher exits."
+        tty_blank
+        tty_print "b. Back"
+        tty_print "x. Exit"
+        tty_blank
+
+        choice="$(read_choice "?: ")"
+        case "${choice}" in
+            1)
+                vault_mode="prompt"
+                return 0
+                ;;
+            2)
+                vault_mode="session"
+                return 0
+                ;;
+            b|B|x|X)
+                return 2
+                ;;
+        esac
+    done
+}
+
+vault_session_request() {
+    local command="${1:-}"
+
+    [[ "${vault_mode}" == "session" ]] || return 1
+    [[ -n "${vault_session_socket}" && -S "${vault_session_socket}" ]] || return 1
+    "$vault_binary" session-request "${vault_session_socket}" "${command}" >/dev/null 2>&1
+}
+
+stop_vault_session() {
+    local pid="${vault_session_pid:-}"
+    local socket="${vault_session_socket:-}"
+    local session_dir="${vault_session_dir:-}"
+    local i
+
+    if [[ -n "${socket}" && -S "${socket}" ]]; then
+        "$vault_binary" session-request "${socket}" shutdown >/dev/null 2>&1 || true
+    fi
+
+    if [[ -n "${pid}" ]]; then
+        for ((i = 0; i < 20; i++)); do
+            if ! kill -0 "${pid}" 2>/dev/null; then
+                wait "${pid}" 2>/dev/null || true
+                break
+            fi
+            sleep 0.1
+        done
+
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill -TERM "${pid}" 2>/dev/null || true
+        fi
+        for ((i = 0; i < 20; i++)); do
+            if ! kill -0 "${pid}" 2>/dev/null; then
+                break
+            fi
+            sleep 0.1
+        done
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill -KILL "${pid}" 2>/dev/null || true
+        fi
+        wait "${pid}" 2>/dev/null || true
+    fi
+
+    if [[ -n "${socket}" ]]; then
+        rm -f -- "${socket}" 2>/dev/null || true
+    fi
+    if [[ -n "${session_dir}" ]]; then
+        rmdir -- "${session_dir}" 2>/dev/null || true
+    fi
+
+    vault_session_pid=""
+    vault_session_socket=""
+    vault_session_dir=""
+}
+
+start_vault_session() {
+    local action="${1:-}"
+    local i
+    local pid
+
+    [[ "${vault_mode}" == "session" ]] || return 0
+    if [[ -n "${vault_session_pid}" ]]; then
+        return 0
+    fi
+
+    if ! vault_session_dir="$(mktemp -d /tmp/mgla-vault-session.XXXXXX 2>/dev/null)"; then
+        tty_print "error: cannot create private vault session directory"
+        return 1
+    fi
+    if ! chmod 700 "${vault_session_dir}"; then
+        tty_print "error: cannot protect vault session directory"
+        stop_vault_session
+        return 1
+    fi
+    vault_session_socket="${vault_session_dir}/vault.sock"
+
+    tty_print "Starting protected vault session..."
+    case "${action}" in
+        open)
+            "$vault_binary" session-open \
+                "${vault_file}" "${wallet_root}" "${vault_session_socket}" \
+                </dev/tty >/dev/tty 2>/dev/tty &
+            ;;
+        create)
+            "$vault_binary" session-create-generated \
+                "${vault_file}" "${vault_size}" "${wallet_root}" \
+                "${wallet_root}" "${vault_session_socket}" \
+                </dev/tty >/dev/tty 2>/dev/tty &
+            ;;
+        *)
+            tty_print "error: invalid vault session action"
+            stop_vault_session
+            return 1
+            ;;
+    esac
+    vault_session_pid=$!
+    pid="${vault_session_pid}"
+
+    for ((i = 0; i < 1800; i++)); do
+        if [[ -S "${vault_session_socket}" ]]; then
+            return 0
+        fi
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            wait "${pid}" 2>/dev/null || true
+            tty_print "error: vault session stopped unexpectedly"
+            stop_vault_session
+            return 1
+        fi
+        sleep 0.1
+    done
+
+    tty_print "error: vault session did not start"
+    stop_vault_session
+    return 1
+}
+
 clear_wallet_root() {
     [[ "${wallet_root}" == "/monero/wallets" ]] || return 1
     [[ -d "${wallet_root}" ]] || return 0
@@ -177,10 +343,20 @@ clear_wallet_root() {
 }
 
 save_vault() {
+    local saved=0
+
     [[ "${vault_loaded}" -eq 1 && "${vault_dirty}" -eq 1 ]] || return 0
 
     tty_print "Saving encrypted wallet vault..."
-    if vault_with_tty_password pack "${vault_file}" "${wallet_root}"; then
+    if [[ "${vault_mode}" == "session" ]]; then
+        if vault_session_request pack; then
+            saved=1
+        fi
+    elif vault_with_tty_password pack "${vault_file}" "${wallet_root}"; then
+        saved=1
+    fi
+
+    if [[ "${saved}" -eq 1 ]]; then
         vault_dirty=0
         tty_print "[ok] encrypted wallet vault saved"
         return 0
@@ -322,7 +498,16 @@ open_or_create_vault() {
             tty_print "------------------------------------------------------------"
             tty_print "Vault file: ${vault_host_path}"
             tty_blank
-            if vault_with_tty_password unpack "${vault_file}" "${wallet_root}"; then
+
+            if [[ "${vault_mode}" == "session" ]]; then
+                if start_vault_session open && vault_session_request unpack; then
+                    vault_loaded=1
+                    vault_dirty=0
+                    tty_print "[ok] encrypted wallet vault opened"
+                    return 0
+                fi
+                stop_vault_session
+            elif vault_with_tty_password unpack "${vault_file}" "${wallet_root}"; then
                 vault_loaded=1
                 vault_dirty=0
                 tty_print "[ok] encrypted wallet vault opened"
@@ -347,6 +532,18 @@ open_or_create_vault() {
     tty_print "If it is lost, the vault cannot be opened again."
     tty_print "Wallet seed phrases can restore wallets, but not local wallet data."
     tty_blank
+
+    if [[ "${vault_mode}" == "session" ]]; then
+        if start_vault_session create; then
+            vault_loaded=1
+            vault_dirty=0
+            tty_print "[ok] encrypted wallet vault created"
+            pause_or_enter
+            return 0
+        fi
+        tty_print "error: failed to create encrypted wallet vault"
+        return 1
+    fi
 
     if "$vault_binary" create-generated "$vault_file" "$vault_size" "$wallet_root"; then
         vault_loaded=1
@@ -1081,6 +1278,17 @@ if ! tty_ok; then
     exit 1
 fi
 
+set +e
+choose_vault_mode
+rc=$?
+set -e
+if [[ "${rc}" -eq 2 ]]; then
+    exit 0
+fi
+if [[ "${rc}" -ne 0 ]]; then
+    exit 1
+fi
+
 if ! mkdir -p "${wallet_root}" 2>/dev/null; then
     tty_print "error: cannot access temporary wallet directory"
     exit 1
@@ -1095,6 +1303,7 @@ while true; do
     tty_print "Monero wallet launcher"
     tty_print "------------------------------------------------------------"
     tty_print "Wallet vault: ${vault_host_path}"
+    tty_print "Unlock mode: ${vault_mode}"
     tty_blank
     tty_print "Choose action:"
     tty_print "1. Open existing wallet"

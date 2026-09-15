@@ -5,12 +5,19 @@ use sha2::Sha256;
 use std::env;
 use std::error::Error;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::fd::FromRawFd;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::{c_char, c_int, c_void};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use subtle::ConstantTimeEq;
+
+#[cfg(unix)]
+use std::net::Shutdown;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
 use tar::{Archive, Builder};
 use tempfile::tempfile;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -49,6 +56,8 @@ const FORMAT_VERSION_V2: u32 = 2;
 #[link(name = "sodium")]
 unsafe extern "C" {
     fn sodium_init() -> c_int;
+    fn sodium_mlock(address: *mut c_void, length: usize) -> c_int;
+    fn sodium_munlock(address: *mut c_void, length: usize) -> c_int;
     fn crypto_pwhash(
         output: *mut u8,
         output_length: u64,
@@ -65,6 +74,34 @@ unsafe extern "C" {
 struct Keys {
     xts: [u8; XTS_KEY_SIZE],
     mac: [u8; MAC_KEY_SIZE],
+}
+
+struct LockedKeys {
+    inner: Box<Keys>,
+}
+
+impl LockedKeys {
+    fn new(keys: Keys) -> VaultResult<Self> {
+        let mut inner = Box::new(keys);
+        let address = inner.as_mut() as *mut Keys as *mut c_void;
+        let result = unsafe { sodium_mlock(address, std::mem::size_of::<Keys>()) };
+        if result != 0 {
+            return Err(io::Error::other("cannot lock vault keys in memory").into());
+        }
+        Ok(Self { inner })
+    }
+
+    fn as_ref(&self) -> &Keys {
+        &self.inner
+    }
+}
+
+impl Drop for LockedKeys {
+    fn drop(&mut self) {
+        self.inner.zeroize();
+        let address = self.inner.as_mut() as *mut Keys as *mut c_void;
+        let _ = unsafe { sodium_munlock(address, std::mem::size_of::<Keys>()) };
+    }
 }
 
 fn invalid(message: impl Into<String>) -> io::Error {
@@ -783,6 +820,161 @@ fn unpack_image(
     unpack_archive(archive, destination)
 }
 
+#[cfg(unix)]
+struct VaultSession {
+    image: PathBuf,
+    wallet_root: PathBuf,
+    layout: VaultLayout,
+    keys: LockedKeys,
+}
+
+#[cfg(unix)]
+impl VaultSession {
+    fn image_matches_layout(&self) -> VaultResult<()> {
+        let current = inspect_image(&self.image)?;
+        if current.format != self.layout.format
+            || current.data_size != self.layout.data_size
+            || current.salt != self.layout.salt
+        {
+            return Err(invalid_data("vault image changed during the session").into());
+        }
+        Ok(())
+    }
+
+    fn pack(&self) -> VaultResult<()> {
+        self.image_matches_layout()?;
+        pack_image(
+            &self.image,
+            self.layout.data_size,
+            &self.wallet_root,
+            &self.layout,
+            self.keys.as_ref(),
+            false,
+        )
+    }
+
+    fn unpack(&self) -> VaultResult<()> {
+        self.image_matches_layout()?;
+        unpack_image(
+            &self.image,
+            &self.wallet_root,
+            &self.layout,
+            self.keys.as_ref(),
+        )
+    }
+
+    fn serve(self, listener: UnixListener) -> VaultResult<()> {
+        for incoming in listener.incoming() {
+            let mut stream = incoming?;
+            let command = match read_session_command(&mut stream) {
+                Ok(command) => command,
+                Err(_) => continue,
+            };
+            let should_stop = command == "shutdown";
+
+            let result = match command.as_str() {
+                "pack" => self.pack(),
+                "unpack" => self.unpack(),
+                "shutdown" => Ok(()),
+                _ => Err(invalid("unknown vault session command").into()),
+            };
+
+            write_session_response(&mut stream, &result)?;
+            if should_stop {
+                return Ok(());
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn read_session_command(stream: &mut UnixStream) -> VaultResult<String> {
+    let mut command = String::new();
+    BufReader::new(stream).take(64).read_line(&mut command)?;
+
+    let command = command.trim_end_matches(['\r', '\n']).to_owned();
+    if command.is_empty() {
+        return Err(invalid("vault session command is empty").into());
+    }
+    Ok(command)
+}
+
+#[cfg(unix)]
+fn write_session_response(stream: &mut UnixStream, result: &VaultResult<()>) -> VaultResult<()> {
+    match result {
+        Ok(()) => stream.write_all(b"OK\n")?,
+        Err(error) => {
+            let message = error.to_string().replace(['\r', '\n'], " ");
+            stream.write_all(b"ERR ")?;
+            stream.write_all(message.as_bytes())?;
+            stream.write_all(b"\n")?;
+        }
+    }
+    stream.flush()?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn bind_session_socket(socket: &Path) -> VaultResult<UnixListener> {
+    if fs::symlink_metadata(socket).is_ok() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "vault session socket already exists",
+        )
+        .into());
+    }
+
+    let listener = UnixListener::bind(socket)?;
+    fs::set_permissions(socket, fs::Permissions::from_mode(0o600))?;
+    Ok(listener)
+}
+
+#[cfg(unix)]
+fn run_vault_session(image: &Path, wallet_root: &Path, socket: &Path) -> VaultResult<()> {
+    let layout = inspect_image(image)?;
+    let password = read_tty_password()?;
+    let keys = derive_keys(&password, &layout)?;
+    let keys = LockedKeys::new(keys)?;
+    drop(password);
+
+    let listener = bind_session_socket(socket)?;
+    let session = VaultSession {
+        image: image.to_owned(),
+        wallet_root: wallet_root.to_owned(),
+        layout,
+        keys,
+    };
+    let result = session.serve(listener);
+    let _ = fs::remove_file(socket);
+    result
+}
+
+#[cfg(unix)]
+fn session_request(socket: &Path, command: &str) -> VaultResult<()> {
+    if !matches!(command, "pack" | "unpack" | "shutdown") {
+        return Err(invalid("unknown vault session command").into());
+    }
+
+    let mut stream = UnixStream::connect(socket)?;
+    stream.write_all(command.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.shutdown(Shutdown::Write)?;
+
+    let mut response = String::new();
+    stream.take(4096).read_to_string(&mut response)?;
+    let response = response.trim_end();
+    if response == "OK" {
+        return Ok(());
+    }
+
+    let message = response
+        .strip_prefix("ERR ")
+        .unwrap_or("invalid response from vault session");
+    Err(invalid_data(message.to_owned()).into())
+}
+
 struct TtyEchoGuard {
     state: String,
 }
@@ -905,7 +1097,11 @@ fn read_tty_confirmation(tty: &mut File) -> VaultResult<bool> {
     Ok(response.as_slice() == b"y" || response.as_slice() == b"Y")
 }
 
-fn create_generated_vault(image: &Path, data_size: u64, source: &Path) -> VaultResult<()> {
+fn prepare_generated_vault(
+    image: &Path,
+    data_size: u64,
+    source: &Path,
+) -> VaultResult<(VaultLayout, LockedKeys)> {
     if fs::symlink_metadata(image).is_ok() {
         return Err(io::Error::new(io::ErrorKind::AlreadyExists, "vault already exists").into());
     }
@@ -925,14 +1121,45 @@ fn create_generated_vault(image: &Path, data_size: u64, source: &Path) -> VaultR
 
     tty.write_all(b"\n")?;
     tty.flush()?;
+    drop(tty);
+
     let layout = VaultLayout::current(data_size)?;
-    let keys = derive_keys(&password, &layout)?;
-    pack_image(image, data_size, source, &layout, &keys, true)
+    let raw_keys = derive_keys(&password, &layout)?;
+    let keys = LockedKeys::new(raw_keys)?;
+    drop(password);
+    pack_image(image, data_size, source, &layout, keys.as_ref(), true)?;
+    Ok((layout, keys))
+}
+
+fn create_generated_vault(image: &Path, data_size: u64, source: &Path) -> VaultResult<()> {
+    let (_layout, _keys) = prepare_generated_vault(image, data_size, source)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_generated_vault_session(
+    image: &Path,
+    data_size: u64,
+    source: &Path,
+    wallet_root: &Path,
+    socket: &Path,
+) -> VaultResult<()> {
+    let (layout, keys) = prepare_generated_vault(image, data_size, source)?;
+    let listener = bind_session_socket(socket)?;
+    let session = VaultSession {
+        image: image.to_owned(),
+        wallet_root: wallet_root.to_owned(),
+        layout,
+        keys,
+    };
+    let result = session.serve(listener);
+    let _ = fs::remove_file(socket);
+    result
 }
 
 fn usage(program: &str) {
     eprintln!(
-        "Usage:\n  {program} --password-fd FD create IMAGE SIZE SOURCE\n  {program} --password-fd FD pack IMAGE SOURCE\n  {program} --password-fd FD unpack IMAGE DESTINATION\n  {program} --tty-password create IMAGE SIZE SOURCE\n  {program} --tty-password pack IMAGE SOURCE\n  {program} --tty-password unpack IMAGE DESTINATION\n  {program} create-generated IMAGE SIZE SOURCE"
+        "Usage:\n  {program} --password-fd FD create IMAGE SIZE SOURCE\n  {program} --password-fd FD pack IMAGE SOURCE\n  {program} --password-fd FD unpack IMAGE DESTINATION\n  {program} --tty-password create IMAGE SIZE SOURCE\n  {program} --tty-password pack IMAGE SOURCE\n  {program} --tty-password unpack IMAGE DESTINATION\n  {program} create-generated IMAGE SIZE SOURCE\n  {program} session-open IMAGE WALLET_ROOT SOCKET\n  {program} session-create-generated IMAGE SIZE SOURCE WALLET_ROOT SOCKET\n  {program} session-request SOCKET COMMAND"
     );
 }
 
@@ -942,16 +1169,52 @@ fn run() -> VaultResult<()> {
     }
 
     let arguments: Vec<String> = env::args().skip(1).collect();
-    if arguments.first().map(String::as_str) == Some("create-generated") {
-        if arguments.len() != 4 {
-            usage("mgla-vault");
-            return Err(invalid("invalid command line").into());
-        }
+    match arguments.first().map(String::as_str) {
+        Some("create-generated") => {
+            if arguments.len() != 4 {
+                usage("mgla-vault");
+                return Err(invalid("invalid command line").into());
+            }
 
-        let image = Path::new(&arguments[1]);
-        let data_size = parse_size(&arguments[2])?;
-        let source = Path::new(&arguments[3]);
-        return create_generated_vault(image, data_size, source);
+            let image = Path::new(&arguments[1]);
+            let data_size = parse_size(&arguments[2])?;
+            let source = Path::new(&arguments[3]);
+            return create_generated_vault(image, data_size, source);
+        }
+        Some("session-open") => {
+            if arguments.len() != 4 {
+                usage("mgla-vault");
+                return Err(invalid("invalid command line").into());
+            }
+
+            return run_vault_session(
+                Path::new(&arguments[1]),
+                Path::new(&arguments[2]),
+                Path::new(&arguments[3]),
+            );
+        }
+        Some("session-create-generated") => {
+            if arguments.len() != 6 {
+                usage("mgla-vault");
+                return Err(invalid("invalid command line").into());
+            }
+
+            let image = Path::new(&arguments[1]);
+            let data_size = parse_size(&arguments[2])?;
+            let source = Path::new(&arguments[3]);
+            let wallet_root = Path::new(&arguments[4]);
+            let socket = Path::new(&arguments[5]);
+            return create_generated_vault_session(image, data_size, source, wallet_root, socket);
+        }
+        Some("session-request") => {
+            if arguments.len() != 3 {
+                usage("mgla-vault");
+                return Err(invalid("invalid command line").into());
+            }
+
+            return session_request(Path::new(&arguments[1]), &arguments[2]);
+        }
+        _ => {}
     }
 
     if arguments.is_empty() {
