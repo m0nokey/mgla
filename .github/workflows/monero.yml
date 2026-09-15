@@ -119,7 +119,7 @@ jobs:
 
       - name: Audit Rust dependencies
         working-directory: monero/docker/monero/vault
-        run: cargo audit --locked
+        run: cargo audit
 
       - name: Scan Docker and Compose configuration
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
