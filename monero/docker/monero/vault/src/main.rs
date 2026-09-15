@@ -644,7 +644,7 @@ fn pack_image(
             .copy_from_slice(&layout.salt);
 
         let mut mac = new_mac(&keys.mac, layout)?;
-        update_envelope_mac(&mut mac, &*envelope);
+        update_envelope_mac(&mut mac, &envelope);
         output.write_all(&*envelope)?;
 
         let sector_count = data_size / SECTOR_SIZE as u64;
@@ -715,7 +715,7 @@ fn verify_image(file: &mut File, layout: &VaultLayout, keys: &Keys) -> VaultResu
     let mut actual = [0u8; TAG_SIZE];
     actual.copy_from_slice(&envelope[ENVELOPE_TAG_OFFSET..ENVELOPE_TAG_OFFSET + TAG_SIZE]);
     let mut mac = new_mac(&keys.mac, layout)?;
-    update_envelope_mac(&mut mac, &*envelope);
+    update_envelope_mac(&mut mac, &envelope);
 
     file.seek(SeekFrom::Start(layout.data_offset))?;
     let mut buffer = [0u8; 64 * 1024];
