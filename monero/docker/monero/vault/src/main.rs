@@ -104,8 +104,7 @@ fn image_data_size(image_size: u64) -> VaultResult<u64> {
         return Err(invalid_data("vault file is too small").into());
     }
     let data_size = image_size - TAG_SIZE as u64;
-    fixed_data_size(data_size)
-        .map_err(|_| invalid_data("vault file has an invalid size").into())?;
+    fixed_data_size(data_size).map_err(|_| invalid_data("vault file has an invalid size"))?;
     Ok(data_size)
 }
 
@@ -243,12 +242,6 @@ impl<W: Write> Write for LimitedWriter<W> {
     }
 }
 
-impl<W> LimitedWriter<W> {
-    fn into_inner(self) -> W {
-        self.inner
-    }
-}
-
 fn validate_entry_path(path: &Path) -> VaultResult<()> {
     if path.is_absolute()
         || path
@@ -262,7 +255,7 @@ fn validate_entry_path(path: &Path) -> VaultResult<()> {
 
 fn validate_archive(file: &mut File) -> VaultResult<()> {
     file.seek(SeekFrom::Start(0))?;
-    let archive = Archive::new(&mut *file);
+    let mut archive = Archive::new(&mut *file);
     for entry in archive.entries()? {
         let entry = entry?;
         validate_entry_path(&entry.path()?)?;
@@ -407,7 +400,7 @@ fn pack_image(
         let mut plaintext = Zeroizing::new([0u8; SECTOR_SIZE]);
 
         for sector in 0..sector_count {
-            rand_bytes(&mut plaintext)?;
+            rand_bytes(&mut plaintext[..])?;
             let offset = if sector == 0 { INNER_HEADER_SIZE } else { 0 };
             if sector == 0 {
                 plaintext[..INNER_HEADER_SIZE].copy_from_slice(&create_inner_header(archive_size)?);
@@ -484,7 +477,7 @@ fn decrypt_archive(file: &mut File, data_size: u64, keys: &Keys) -> VaultResult<
     let mut remaining = 0u64;
 
     for sector in 0..sector_count {
-        file.read_exact(&mut ciphertext)?;
+        file.read_exact(&mut ciphertext[..])?;
         let plaintext =
             Zeroizing::new(crypt_sector(&keys.xts, sector, &ciphertext, Mode::Decrypt)?);
         if sector == 0 {
