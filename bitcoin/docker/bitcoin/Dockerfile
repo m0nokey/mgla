@@ -99,7 +99,6 @@ RUN apk upgrade --no-cache \
         libstdc++ \
         py3-cryptography \
         python3 \
-        qrencode \
         tzdata \
     && addgroup -g 1000 -S electrum \
     && adduser -S -D -H -u 1000 -G electrum -s /sbin/nologin electrum \
@@ -110,7 +109,8 @@ COPY --chmod=0755 docker/bitcoin/entrypoint.sh /usr/local/bin/entrypoint
 COPY --chmod=0755 docker/bitcoin/wallet-launcher.sh /opt/app/bitcoin
 
 RUN /opt/venv/bin/electrum --offline --version \
-    && /opt/venv/bin/python -c 'import aiohttp, aiorpcx, electrum_ecc, cryptography; print("Electrum runtime imports: OK")' \
+    && /opt/venv/bin/python -c 'import aiohttp, aiorpcx, electrum_ecc, cryptography, qrcode; print("Electrum runtime imports: OK")' \
+    && test -x /opt/venv/bin/qr \
     && chmod 0755 /opt/app/bitcoin /usr/local/bin/entrypoint \
     && chown -R 1000:1000 /home/electrum /opt/venv /opt/app
 

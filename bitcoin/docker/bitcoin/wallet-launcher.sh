@@ -4,6 +4,7 @@ IFS=$'\n\t'
 umask 077
 
 ELECTRUM_BIN="/opt/venv/bin/electrum"
+QR_BIN="/opt/venv/bin/qr"
 ELECTRUMDIR="${ELECTRUMDIR:-/home/electrum/.electrum}"
 WALLETS_DIR="${ELECTRUMDIR}/wallets"
 HAPROXY_IP="${HAPROXY_IP:?HAPROXY_IP is required}"
@@ -53,6 +54,11 @@ ipv4_address_valid() {
 
 if [[ ! -x "${ELECTRUM_BIN}" ]]; then
     printf '[error] Electrum binary is missing: %s\n' "${ELECTRUM_BIN}" >&2
+    exit 1
+fi
+
+if [[ ! -x "${QR_BIN}" ]]; then
+    printf '[error] QR renderer is missing: %s\n' "${QR_BIN}" >&2
     exit 1
 fi
 
@@ -808,7 +814,7 @@ render_receive_address() {
     tty_line ''
     tty_line "${uri}"
     tty_line ''
-    qrencode -t ANSIUTF8 "${uri}" || true
+    "${QR_BIN}" --ascii "${uri}" || true
 }
 
 show_receive_address() {
@@ -825,7 +831,7 @@ render_new_receive_address() {
     tty_line ''
     tty_line "${uri}"
     tty_line ''
-    qrencode -t ANSIUTF8 "${uri}" || true
+    "${QR_BIN}" --ascii "${uri}" || true
 }
 
 show_new_receive_address() {
