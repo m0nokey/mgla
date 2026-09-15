@@ -361,9 +361,9 @@ wait_for_proxy() {
 
     info 'waiting for HAProxy to accept a Tor connection'
     for ((seconds = 1; seconds <= 60; seconds++)); do
-        response="$(docker exec "${bitcoin_container}" curl -fsS --max-time 4 \
-            --proxy "socks5h://${int_network_container_haproxy_ipv4}:9095" \
-            https://check.torproject.org/api/ip 2>/dev/null || true)"
+        response="$(docker exec "${bitcoin_container}" \
+            /opt/app/network-check.py tor \
+            "${int_network_container_haproxy_ipv4}" 9095 2>/dev/null || true)"
 
         if printf '%s\n' "${response}" |
             grep -Eq '"IsTor"[[:space:]]*:[[:space:]]*true'; then
@@ -387,19 +387,19 @@ run_network_tests() {
 
     info 'running internal network checks'
     printf '%s\n' '[test] direct Internet must be blocked from internal network'
-    direct_result="$(docker exec "${bitcoin_container}" curl -fsS --max-time 8 \
-        https://check.torproject.org/api/ip 2>/dev/null || true)"
+    direct_result="$(docker exec "${bitcoin_container}" \
+        /opt/app/network-check.py direct 2>/dev/null || true)"
     if [[ -n "${direct_result}" ]]; then
         error 'direct Internet unexpectedly succeeded'
         printf '%s\n' "${direct_result}" >&2
         return 1
     fi
-    printf '%s\n' '[ok] direct curl blocked'
+    printf '%s\n' '[ok] direct network blocked'
 
     printf '%s\n' '[test] Tor through HAProxy SOCKS5h must work'
-    tor_result="$(docker exec "${bitcoin_container}" curl -fsS --max-time 15 \
-        --proxy "socks5h://${int_network_container_haproxy_ipv4}:9095" \
-        https://check.torproject.org/api/ip 2>/dev/null || true)"
+    tor_result="$(docker exec "${bitcoin_container}" \
+        /opt/app/network-check.py tor \
+        "${int_network_container_haproxy_ipv4}" 9095 2>/dev/null || true)"
     if ! printf '%s\n' "${tor_result}" |
         grep -Eq '"IsTor"[[:space:]]*:[[:space:]]*true'; then
         error 'Tor SOCKS5h through HAProxy failed'

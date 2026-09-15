@@ -5,3 +5,4 @@
 !docker/bitcoin/Dockerfile
 !docker/bitcoin/entrypoint.sh
 !docker/bitcoin/wallet-launcher.sh
+!docker/bitcoin/network-check.py

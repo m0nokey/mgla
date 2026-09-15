@@ -41,11 +41,6 @@ RUN apk upgrade --no-cache \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
     && printf '%s\n' UTC > /etc/timezone
 
-# Pin the fixed nghttp2 runtime used by curl.
-RUN apk add --no-cache \
-        --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
-        nghttp2-libs=1.70.0-r0
-
 WORKDIR /tmp/electrum
 COPY requirements.lock /tmp/electrum/requirements.lock
 
@@ -108,7 +103,6 @@ RUN apk upgrade --no-cache \
         bash \
         ca-certificates \
         coreutils \
-        curl \
         libgcc \
         libsecp256k1 \
         libstdc++ \
@@ -122,20 +116,17 @@ RUN apk upgrade --no-cache \
     && install -d -m 0700 -o 1000 -g 1000 /home/electrum/.electrum \
     && install -d -m 0755 -o root -g root /opt/app /opt/venv
 
-# Pin the fixed nghttp2 runtime used by curl.
-RUN apk add --no-cache \
-        --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
-        nghttp2-libs=1.70.0-r0
-
 COPY --from=builder /opt/venv /opt/venv
 COPY --chmod=0755 docker/bitcoin/entrypoint.sh /usr/local/bin/entrypoint
 COPY --chmod=0755 docker/bitcoin/wallet-launcher.sh /opt/app/bitcoin
+COPY --chmod=0755 docker/bitcoin/network-check.py /opt/app/network-check.py
 
 RUN command -v timeout \
     && test -e /usr/share/zoneinfo/UTC \
     && /opt/venv/bin/electrum --offline --version \
     && /opt/venv/bin/python -c 'import aiohttp, aiorpcx, electrum_ecc, cryptography, qrcode; print("Electrum runtime imports: OK")' \
     && test -x /opt/venv/bin/qr \
+    && test -x /opt/app/network-check.py \
     && chmod 0755 /opt/app/bitcoin /usr/local/bin/entrypoint \
     && chown -R 1000:1000 /home/electrum /opt/venv /opt/app
 
