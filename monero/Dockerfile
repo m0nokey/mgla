@@ -65,11 +65,10 @@ ENV CCACHE_DIR=/ccache
 WORKDIR /src/vault
 COPY --from=shared vault/Cargo.toml vault/Cargo.lock ./
 COPY --from=shared vault/src ./src
+COPY --from=shared vault/build.sh ./build.sh
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    cargo test --release --locked \
-    && cargo build --release --locked \
-    && strip --strip-unneeded target/release/mgla-vault
+    bash ./build.sh
 
 WORKDIR /src/monero
 
@@ -159,6 +158,8 @@ RUN apk add --no-cache \
     && install -d -m 0700 -o 1000 -g 1000 /monero/wallets /monero/vault-store /tmp/home
 
 COPY --from=builder /src/monero/build/release/bin/monero-wallet-cli /src/vault/target/release/mgla-vault /opt/monero/
+COPY --chmod=0755 --from=shared vault/launcher.sh /opt/monero/vault-launcher.sh
+COPY --chmod=0755 --from=shared vault/smoke-test.sh /opt/monero/vault-smoke-test
 COPY wallet-launcher.sh /opt/app/monero
 
 RUN chmod 0755 /opt/app/monero /opt/monero/monero-wallet-cli /opt/monero/mgla-vault \

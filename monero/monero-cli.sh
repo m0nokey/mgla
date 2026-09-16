@@ -373,23 +373,7 @@ echo "${tor_json}"
 echo "[ok] Tor SOCKS5h via HAProxy works"
 
 echo "[info] checking encrypted wallet vault"
-docker exec -i "${monero_container}" /bin/sh <<'EOS'
-set -eu
-tmp="$(mktemp -d)"
-trap 'rm -rf "${tmp}"' EXIT
-mkdir "${tmp}/source" "${tmp}/destination" "${tmp}/wrong"
-printf '%s\n' 'vault smoke test' > "${tmp}/source/test.wallet"
-printf '%s\n' 'test-password' | /opt/monero/mgla-vault \
-    --password-fd 0 create "${tmp}/wallets.mgla" 1M "${tmp}/source"
-printf '%s\n' 'test-password' | /opt/monero/mgla-vault \
-    --password-fd 0 unpack "${tmp}/wallets.mgla" "${tmp}/destination"
-cmp "${tmp}/source/test.wallet" "${tmp}/destination/test.wallet"
-if printf '%s\n' 'wrong-password' | /opt/monero/mgla-vault \
-    --password-fd 0 unpack "${tmp}/wallets.mgla" "${tmp}/wrong"; then
-    echo '[error] vault accepted an invalid password' >&2
-    exit 1
-fi
-EOS
+docker exec "${monero_container}" /opt/monero/vault-smoke-test /opt/monero/mgla-vault
 echo "[ok] encrypted wallet vault passed smoke test"
 
 echo "[info] checking verified Monero binary"

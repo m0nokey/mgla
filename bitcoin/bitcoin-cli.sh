@@ -323,6 +323,13 @@ run_network_tests() {
     printf '%s\n' '[ok] Tor SOCKS5h via HAProxy works'
 }
 
+run_vault_checks() {
+    info 'checking encrypted wallet vault'
+    docker exec "${bitcoin_container}" \
+        /opt/bitcoin/vault-smoke-test /opt/bitcoin/mgla-vault
+    printf '%s\n' '[ok] encrypted wallet vault passed smoke test'
+}
+
 run_electrum_checks() {
     local version
 
@@ -414,6 +421,7 @@ main() {
     wait_for_exit
     wait_for_proxy
     run_network_tests
+    run_vault_checks
     run_electrum_checks
 
     if [[ "${CI:-0}" == 1 || "${SKIP_WALLET_MENU:-0}" == 1 ]]; then

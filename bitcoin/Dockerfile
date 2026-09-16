@@ -48,11 +48,10 @@ RUN apk upgrade --no-cache \
 WORKDIR /tmp/vault
 COPY --from=shared vault/Cargo.toml vault/Cargo.lock ./
 COPY --from=shared vault/src ./src
+COPY --from=shared vault/build.sh ./build.sh
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    cargo test --release --locked \
-    && cargo build --release --locked \
-    && strip --strip-unneeded target/release/mgla-vault
+    bash ./build.sh
 
 WORKDIR /tmp/electrum
 COPY requirements.lock /tmp/electrum/requirements.lock
@@ -134,6 +133,8 @@ RUN apk upgrade --no-cache \
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /tmp/vault/target/release/mgla-vault /opt/bitcoin/mgla-vault
+COPY --chmod=0755 --from=shared vault/launcher.sh /opt/bitcoin/vault-launcher.sh
+COPY --chmod=0755 --from=shared vault/smoke-test.sh /opt/bitcoin/vault-smoke-test
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint
 COPY --chmod=0755 wallet-launcher.sh /opt/app/bitcoin
 COPY --chmod=0755 network-check.py /opt/app/network-check.py

@@ -73,7 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t shell_files < <(
-            find bitcoin monero network shared/lib -type f -name '*.sh' -print
+            find bitcoin monero network shared/lib shared/vault -type f -name '*.sh' -print
             printf '%s\n' run.sh
           )
           test "${#shell_files[@]}" -gt 0
