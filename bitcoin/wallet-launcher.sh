@@ -9,7 +9,6 @@ if [[ "$(id -u)" == 0 ]]; then
 fi
 
 ELECTRUM_BIN="/opt/venv/bin/electrum"
-QR_BIN="/opt/venv/bin/qr"
 ELECTRUMDIR="${ELECTRUMDIR:-/home/electrum/.electrum/bitcoin}"
 WALLETS_DIR="${ELECTRUMDIR}/wallets"
 
@@ -59,10 +58,6 @@ if [[ ! -x "${ELECTRUM_BIN}" ]]; then
     exit 1
 fi
 
-if [[ ! -x "${QR_BIN}" ]]; then
-    printf '[error] QR renderer is missing: %s\n' "${QR_BIN}" >&2
-    exit 1
-fi
 
 if ! ipv4_address_valid "${HAPROXY_IP}"; then
     printf '[error] invalid HAPROXY_IP: %s\n' "${HAPROXY_IP}" >&2
@@ -123,6 +118,17 @@ electrum_cli() {
 electrum_probe() {
     timeout 8 "${ELECTRUM_BIN}" "$@" </dev/null
 }
+electrum_version() {
+    local version
+
+    version="$(electrum_probe version 2>/dev/null || true)"
+    if [[ -n "${version}" ]]; then
+        printf '%s\n' "${version}" | head -n 1
+        return 0
+    fi
+    "${ELECTRUM_BIN}" --offline --version 2>&1 | head -n 1 || true
+}
+
 
 electrum_tty() {
     local status
@@ -812,6 +818,16 @@ unlock_wallet() {
     vault_mark_dirty
     electrum_tty -w "${wallet}" load_wallet
 }
+open_created_wallet() {
+    local wallet="$1"
+    screen_header 'Open wallet' "Wallet: $(basename "${wallet}")"
+    tty_line 'The wallet was created. Enter the same wallet password to load it into Electrum.'
+    tty_line 'The launcher does not store this password.'
+    tty_line ''
+    vault_mark_dirty
+    electrum_tty -w "${wallet}" load_wallet
+}
+
 
 create_wallet() {
     local wallet seed answer rc
@@ -853,7 +869,13 @@ create_wallet() {
 
     screen_header 'Create wallet' 'Electrum will now ask for the seed and wallet password.'
     if electrum_tty -w "${wallet}" restore :; then
-        wallet_menu "${wallet}"
+        if open_created_wallet "${wallet}"; then
+            wallet_menu "${wallet}"
+        else
+            screen_header 'Create wallet' 'Wallet was created but could not be loaded.'
+            tty_line 'It remains in the vault and can be opened from the wallet list.'
+            pause_screen
+        fi
     else
         rm -f -- "${wallet}"
         screen_header 'Create wallet' 'Wallet creation failed.'
@@ -880,7 +902,13 @@ restore_wallet() {
     tty_line 'The seed and password are entered directly into Electrum.'
     tty_line ''
     if electrum_tty -w "${wallet}" restore :; then
-        wallet_menu "${wallet}"
+        if open_created_wallet "${wallet}"; then
+            wallet_menu "${wallet}"
+        else
+            screen_header 'Restore wallet' 'Wallet was restored but could not be loaded.'
+            tty_line 'It remains in the vault and can be opened from the wallet list.'
+            pause_screen
+        fi
     else
         rm -f -- "${wallet}"
         screen_header 'Restore wallet' 'Wallet restoration failed.'
@@ -959,19 +987,22 @@ show_wallet_balance() {
 }
 
 render_receive_address() {
-    local wallet="$1" address uri
+    local wallet="$1" address error_file
     screen_header 'Receive BTC' 'Use this address to receive bitcoin.'
-    address="$(electrum_cli -w "${wallet}" getunusedaddress 2>/dev/null || true)"
-    if [[ -z "${address}" || "${address}" == null ]]; then
-        address="$(electrum_cli -w "${wallet}" createnewaddress 2>/dev/null || true)"
+    error_file="$(mktemp /tmp/mgla-electrum-address.XXXXXX)"
+    address="$(electrum_cli -w "${wallet}" getunusedaddress 2>"${error_file}" || true)"
+    if ! bitcoin_address_syntax_valid "${address}"; then
+        address="$(electrum_cli -w "${wallet}" createnewaddress 2>"${error_file}" || true)"
     fi
-    uri="bitcoin:${address}"
+    if ! bitcoin_address_syntax_valid "${address}"; then
+        tty_line 'Could not obtain a Bitcoin receiving address.'
+        sed -n '1,12p' "${error_file}" 2>/dev/null || true
+        rm -f -- "${error_file}"
+        return 0
+    fi
+    rm -f -- "${error_file}"
     tty_line 'Address:'
     tty_line "${address}"
-    tty_line ''
-    tty_line "${uri}"
-    tty_line ''
-    "${QR_BIN}" --ascii "${uri}" || true
 }
 
 show_receive_address() {
@@ -979,16 +1010,19 @@ show_receive_address() {
 }
 
 render_new_receive_address() {
-    local wallet="$1" address uri
+    local wallet="$1" address error_file
     screen_header 'New receive address' 'Generate a fresh deterministic receiving address.'
-    address="$(electrum_cli -w "${wallet}" createnewaddress 2>/dev/null || true)"
-    uri="bitcoin:${address}"
+    error_file="$(mktemp /tmp/mgla-electrum-address.XXXXXX)"
+    address="$(electrum_cli -w "${wallet}" createnewaddress 2>"${error_file}" || true)"
+    if ! bitcoin_address_syntax_valid "${address}"; then
+        tty_line 'Could not create a new Bitcoin receiving address.'
+        sed -n '1,12p' "${error_file}" 2>/dev/null || true
+        rm -f -- "${error_file}"
+        return 0
+    fi
+    rm -f -- "${error_file}"
     tty_line 'Address:'
     tty_line "${address}"
-    tty_line ''
-    tty_line "${uri}"
-    tty_line ''
-    "${QR_BIN}" --ascii "${uri}" || true
 }
 
 show_new_receive_address() {
@@ -1341,7 +1375,7 @@ switch_server() {
 
 render_diagnostics() {
     screen_header 'Diagnostics' 'Electrum version and transport policy.'
-    printf '%-20s %s\n' 'Electrum:' "$("${ELECTRUM_BIN}" --offline --version 2>/dev/null | head -n 1 || true)"
+    printf '%-20s %s\n' 'Electrum:' "$(electrum_version)"
     printf '%-20s %s\n' 'Server:' "$(current_server)"
     printf '%-20s %s\n' 'Proxy:' "$(electrum_probe getconfig proxy 2>/dev/null || true)"
     printf '%-20s %s\n' 'Proxy enabled:' "$(electrum_probe getconfig enable_proxy 2>/dev/null || true)"
@@ -1418,7 +1452,7 @@ if [[ "${MGLA_CI:-0}" == 1 ]]; then
 fi
 
 while true; do
-    version="$("${ELECTRUM_BIN}" --offline --version 2>/dev/null | head -n 1 || true)"
+    version="$(electrum_version)"
     screen_header 'Bitcoin Electrum CLI' "${version:-version unknown}"
     tty_line '1. Network status'
     tty_line '2. Create wallet'

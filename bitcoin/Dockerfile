@@ -137,7 +137,6 @@ RUN command -v curl \
     && test -e /usr/share/zoneinfo/UTC \
     && /opt/venv/bin/electrum --offline --version \
     && /opt/venv/bin/python -c 'import aiohttp, aiorpcx, cffi, electrum_ecc, cryptography, qrcode; assert cryptography.__version__ == "50.0.1", cryptography.__version__; print("Electrum runtime imports: OK")' \
-    && test -x /opt/venv/bin/qr \
     && test -x /opt/app/network-check.py \
     && chmod 0755 /opt/app/bitcoin /usr/local/bin/entrypoint /opt/bitcoin/mgla-vault \
     && ldd /opt/bitcoin/mgla-vault \
