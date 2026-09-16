@@ -194,7 +194,6 @@ vault_configure \
     "/monero/wallets" \
     "/monero/wallets" \
     "/monero/wallets/monero" \
-    "monero" \
     "/opt/monero/mgla-vault" \
     "/monero/vault-store" \
     "${WALLET_VAULT_HOST_DIR:-${HOME}/.mgla}" \

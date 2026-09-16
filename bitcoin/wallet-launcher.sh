@@ -343,7 +343,6 @@ vault_configure \
     "/home/electrum/.electrum" \
     "/home/electrum/.electrum" \
     "${ELECTRUMDIR}" \
-    "bitcoin" \
     "/opt/bitcoin/mgla-vault" \
     "/bitcoin/vault-store" \
     "${WALLET_VAULT_HOST_DIR:-${HOME}/.mgla}" \

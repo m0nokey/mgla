@@ -4,17 +4,16 @@
 # Shared encrypted-wallet vault lifecycle for every wallet launcher.
 #
 # A wallet launcher must provide these UI adapters, source this file, and call
-# vault_configure with its wallet-specific paths and type:
+# vault_configure with its wallet-specific paths:
 #   vault_tty_clear, vault_tty_blank, vault_tty_printf,
 #   vault_read_choice, vault_pause_or_enter
 #
 # The adapters are the only wallet-specific part of this module. Password
-# handling, session handling, layout migration, and persistence stay here.
+# handling, session handling, and persistence stay here.
 
 vault_root=""
 vault_root_expected=""
 wallet_root=""
-vault_wallet_type=""
 vault_binary=""
 vault_store=""
 vault_host_dir=""
@@ -23,25 +22,23 @@ vault_file=""
 vault_host_path=""
 vault_loaded=0
 vault_dirty=0
-vault_layout_migrated=0
 vault_mode=""
 vault_session_dir=""
 vault_session_socket=""
 vault_session_pid=""
 
 vault_configure() {
-    if [[ "$#" -ne 8 ]]; then
-        printf '%s\n' '[error] shared vault configuration requires eight arguments' >&2
+    if [[ "$#" -ne 7 ]]; then
+        printf '%s\n' '[error] shared vault configuration requires seven arguments' >&2
         return 2
     fi
 
-    local root="$1" expected_root="$2" wallet="$3" wallet_type="$4"
-    local binary="$5" store="$6" host_dir="$7" size="$8"
+    local root="$1" expected_root="$2" wallet="$3"
+    local binary="$4" store="$5" host_dir="$6" size="$7"
 
     vault_root="${root}"
     vault_root_expected="${expected_root}"
     wallet_root="${wallet}"
-    vault_wallet_type="${wallet_type}"
     vault_binary="${binary}"
     vault_store="${store}"
     vault_host_dir="${host_dir}"
@@ -50,7 +47,6 @@ vault_configure() {
     vault_host_path=""
     vault_loaded=0
     vault_dirty=0
-    vault_layout_migrated=0
     vault_mode="${MGLA_VAULT_MODE:-}"
     vault_session_dir=""
     vault_session_socket=""
@@ -72,7 +68,7 @@ vault_validate_interface() {
     done
 
     for required in \
-        vault_root vault_root_expected wallet_root vault_wallet_type \
+        vault_root vault_root_expected wallet_root \
         vault_binary vault_store vault_host_dir vault_size; do
         if [[ -z "${!required+x}" ]]; then
             printf '[error] shared vault variable is missing: %s\n' "${required}" >&2
@@ -272,93 +268,7 @@ clear_wallet_root() {
     find "${vault_root}" -mindepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 }
 
-move_legacy_vault_entries() {
-    local target="$1" path name target_name
-
-    target_name="${target##*/}"
-    if ! install -d -m 0700 "${target}"; then
-        return 1
-    fi
-    while IFS= read -r -d '' path; do
-        name="${path##*/}"
-        if [[ "${name}" == "${target_name}" ]]; then
-            continue
-        fi
-        if [[ "${name}" == ".mgla-wallet-type" ]]; then
-            rm -f -- "${path}"
-        else
-            mv -- "${path}" "${target}/"
-        fi
-    done < <(find "${vault_root}" -mindepth 1 -maxdepth 1 -print0)
-}
-
-legacy_monero_layout() {
-    local path name
-
-    for path in "${vault_root}"/*; do
-        if [[ ! -d "${path}" ]]; then
-            continue
-        fi
-        name="${path##*/}"
-        if [[ -f "${path}/${name}" && -f "${path}/${name}.keys" ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-normalize_vault_layout() {
-    local marker="" legacy_kind="" known_kind
-
-    vault_layout_migrated=0
-
-    # A vault belongs to one wallet type. Refuse a valid vault from another
-    # wallet instead of silently creating an empty wallet beside its data.
-    if [[ -d "${vault_root}/${vault_wallet_type}" ]]; then
-        for known_kind in monero bitcoin; do
-            if [[ "${known_kind}" != "${vault_wallet_type}" &&
-                  -e "${vault_root}/${known_kind}" ]]; then
-                return 1
-            fi
-        done
-        return 0
-    fi
-    for known_kind in monero bitcoin; do
-        if [[ "${known_kind}" != "${vault_wallet_type}" &&
-              -d "${vault_root}/${known_kind}" ]]; then
-            return 1
-        fi
-    done
-
-    if [[ -f "${vault_root}/.mgla-wallet-type" ]]; then
-        IFS= read -r marker < "${vault_root}/.mgla-wallet-type" || true
-        if [[ -n "${marker}" && "${marker}" != "${vault_wallet_type}" ]]; then
-            return 1
-        fi
-        legacy_kind="${marker}"
-    fi
-    if [[ -z "${legacy_kind}" ]] && legacy_monero_layout; then
-        legacy_kind="monero"
-    fi
-    if [[ -z "${legacy_kind}" &&
-          ( -d "${vault_root}/wallets" || -f "${vault_root}/config" ) ]]; then
-        legacy_kind="bitcoin"
-    fi
-
-    if [[ -n "${legacy_kind}" ]]; then
-        [[ "${legacy_kind}" == "${vault_wallet_type}" ]] || return 1
-        if ! move_legacy_vault_entries "${vault_root}/${vault_wallet_type}"; then
-            return 1
-        fi
-        vault_layout_migrated=1
-        return 0
-    fi
-
-    if [[ -n "$(find "${vault_root}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
-        return 1
-    fi
-    return 0
-}
+# The vault is a generic encrypted container. Wallet launchers decide how to organize their own files inside it.
 
 ensure_wallet_root() {
     if [[ -e "${wallet_root}" && ! -d "${wallet_root}" ]]; then
@@ -536,26 +446,26 @@ open_or_create_vault() {
 
             if [[ "${vault_mode}" == "session" ]]; then
                 if start_vault_session open && vault_session_request unpack; then
-                    if ! normalize_vault_layout || ! ensure_wallet_root; then
+                    if ! ensure_wallet_root; then
                         stop_vault_session
                         clear_wallet_root
-                        vault_tty_print "error: unrecognized wallet vault layout"
+                        vault_tty_print "error: cannot initialize wallet directory"
                         return 1
                     fi
                     vault_loaded=1
-                    vault_dirty="${vault_layout_migrated}"
+                    vault_dirty=0
                     vault_tty_print "[ok] encrypted wallet vault opened"
                     return 0
                 fi
                 stop_vault_session
             elif vault_with_tty_password unpack "${vault_file}" "${vault_root}"; then
-                if ! normalize_vault_layout || ! ensure_wallet_root; then
+                if ! ensure_wallet_root; then
                     clear_wallet_root
-                    vault_tty_print "error: unrecognized wallet vault layout"
+                    vault_tty_print "error: cannot initialize wallet directory"
                     return 1
                 fi
                 vault_loaded=1
-                vault_dirty="${vault_layout_migrated}"
+                vault_dirty=0
                 vault_tty_print "[ok] encrypted wallet vault opened"
                 return 0
             fi
