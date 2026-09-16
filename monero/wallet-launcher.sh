@@ -578,22 +578,25 @@ wallet_name_valid() {
 }
 
 set_wallet_target() {
-    local name="$1"
+    local name="$1" root
+    root="$(vault_wallet_root_path)"
     wallet_name="${name}"
-    wallet_dir="${wallet_root}/${name}"
+    wallet_dir="${root}/${name}"
     wallet_file="${wallet_dir}/${name}"
     wallet_keys="${wallet_file}.keys"
 }
 
 wallet_is_complete() {
-    local name="$1"
-    [[ -f "${wallet_root}/${name}/${name}" &&
-       -f "${wallet_root}/${name}/${name}.keys" ]]
+    local name="$1" root
+    root="$(vault_wallet_root_path)"
+    [[ -f "${root}/${name}/${name}" &&
+       -f "${root}/${name}/${name}.keys" ]]
 }
 
 list_wallet_names() {
-    local d name
-    for d in "${wallet_root}"/*; do
+    local d name root
+    root="$(vault_wallet_root_path)"
+    for d in "${root}"/*; do
         [[ -d "${d}" ]] || continue
         name="${d##*/}"
         wallet_name_valid "${name}" || continue
@@ -614,7 +617,7 @@ choose_existing_wallet() {
         clear_screen
         tty_print "Open existing wallet"
         tty_print "------------------------------------------------------------"
-        tty_print "Wallet vault: ${vault_host_path}"
+        tty_print "Wallet vault: $(vault_host_file_path)"
         tty_blank
 
         if (( ${#names[@]} == 0 )); then
@@ -645,7 +648,8 @@ choose_existing_wallet() {
 }
 
 prompt_new_wallet() {
-    local name
+    local name root
+    root="$(vault_wallet_root_path)"
 
     while true; do
         clear_screen
@@ -667,7 +671,7 @@ prompt_new_wallet() {
             pause_or_enter
             continue
         fi
-        if [[ -e "${wallet_root}/${name}" ]]; then
+        if [[ -e "${root}/${name}" ]]; then
             tty_print "That wallet name already exists or is reserved."
             pause_or_enter
             continue
@@ -878,7 +882,7 @@ if [[ "${rc}" -ne 0 ]]; then
     exit 1
 fi
 
-if ! mkdir -p "${vault_root}" 2>/dev/null; then
+if ! mkdir -p "$(vault_root_path)" 2>/dev/null; then
     tty_print "error: cannot access temporary vault directory"
     exit 1
 fi
@@ -891,8 +895,8 @@ while true; do
     clear_screen
     tty_print "Monero wallet launcher"
     tty_print "------------------------------------------------------------"
-    tty_print "Wallet vault: ${vault_host_path}"
-    tty_print "Unlock mode: ${vault_mode}"
+    tty_print "Wallet vault: $(vault_host_file_path)"
+    tty_print "Unlock mode: $(vault_unlock_mode)"
     tty_blank
     tty_print "Choose action:"
     tty_print "1. Open existing wallet"

@@ -81,6 +81,22 @@ vault_validate_interface() {
     done
 }
 
+vault_root_path() {
+    printf '%s\n' "${vault_root}"
+}
+
+vault_wallet_root_path() {
+    printf '%s\n' "${wallet_root}"
+}
+
+vault_host_file_path() {
+    printf '%s\n' "${vault_host_path}"
+}
+
+vault_unlock_mode() {
+    printf '%s\n' "${vault_mode}"
+}
+
 vault_tty_print() {
     vault_tty_printf '%s\n' "${1:-}"
 }
