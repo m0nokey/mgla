@@ -87,6 +87,7 @@ fi
 exit_image="${image_prefix}-exit:${image_tag}"
 haproxy_image="${image_prefix}-haproxy:${image_tag}"
 bitcoin_image="${image_prefix}-bitcoin:${image_tag}"
+vault_image="${image_prefix}-vault:${image_tag}"
 
 exit_a_container="mgla-exit-a"
 exit_b_container="mgla-exit-b"
@@ -347,19 +348,16 @@ run_electrum_checks() {
 
     if [[ "${CI:-0}" == 1 ]]; then
         info 'CI mode: skipping live Electrum onion discovery'
-        printf '%s\n' '[ok] Electrum CLI, input validation, and Tor proxy checks passed'
-        return 0
+    else
+        info 'live Electrum onion discovery runs once before vault opening'
     fi
-
-    info 'checking official onion server discovery'
-    docker exec -e MGLA_CI=1 "${bitcoin_container}" /opt/app/bitcoin
-    printf '%s\n' '[ok] Electrum onion discovery and wallet runtime checks passed'
+    printf '%s\n' '[ok] Electrum CLI, input validation, and Tor proxy checks passed'
 }
 
 export_runtime_config() {
     export project
     export exit_a_container exit_b_container haproxy_container bitcoin_container
-    export exit_image haproxy_image bitcoin_image
+    export exit_image haproxy_image bitcoin_image vault_image
     export alpine_version electrum_version electrum_archive_sha256
     export wallet_store_host_dir
     export bitcoin_container_uid bitcoin_container_gid
@@ -408,9 +406,9 @@ main() {
     else
         info 'building Alpine Tor, HAProxy, and Electrum images'
         if [[ "${NO_CACHE:-0}" == 1 ]]; then
-            compose build --pull --no-cache
+            compose --profile vault build --pull --no-cache
         else
-            compose build --pull
+            compose --profile vault build --pull
         fi
     fi
 

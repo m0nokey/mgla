@@ -4,6 +4,17 @@ x-mgla-vault-resources: &mgla-vault-resources
   mem_limit: 2g
 
 services:
+  # Build-only service. Wallet images consume its single mgla-vault artifact
+  # through the service additional_context; it is never started at runtime.
+  vault:
+    profiles: ["vault"]
+    image: ${vault_image:-mgla-vault:latest}
+    build:
+      context: ./shared
+      dockerfile: vault/Dockerfile
+      args:
+        ALPINE_VERSION: "${alpine_version:-3.24}"
+
   exit_a:
     container_name: ${exit_a_container:-mgla-exit-a}
     image: ${exit_image:-mgla-exit:latest}
@@ -122,6 +133,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         shared: ./shared
+        vault: service:vault
       args:
         ALPINE_VERSION: "${alpine_version:-3.24}"
         MONERO_VERSION: "${monero_version:-v0.18.5.1}"
@@ -173,6 +185,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         shared: ./shared
+        vault: service:vault
       args:
         ALPINE_VERSION: "${alpine_version:-3.24}"
         ELECTRUM_VERSION: "${electrum_version:-4.8.2}"

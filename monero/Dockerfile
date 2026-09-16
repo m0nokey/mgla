@@ -61,16 +61,6 @@ RUN set -eux; \
 
 ENV CCACHE_DIR=/ccache
 
-# Build the memory-safe userspace vault before the large Monero compilation so
-# changes to the wallet launcher do not invalidate this layer.
-WORKDIR /src/vault
-COPY --from=shared vault/Cargo.toml vault/Cargo.lock ./
-COPY --from=shared vault/src ./src
-COPY --from=shared vault/build.sh ./build.sh
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    bash ./build.sh
-
 WORKDIR /src/monero
 
 # Alpine's official package builds Monero directly against maintained Alpine
@@ -158,7 +148,8 @@ RUN apk add --no-cache \
     && install -d -m 0755 -o root -g root /opt/app /opt/monero \
     && install -d -m 0700 -o 1000 -g 1000 /monero/wallets /monero/vault-store /tmp/home
 
-COPY --from=builder /src/monero/build/release/bin/monero-wallet-cli /src/vault/target/release/mgla-vault /opt/monero/
+COPY --from=builder /src/monero/build/release/bin/monero-wallet-cli /opt/monero/monero-wallet-cli
+COPY --from=vault /mgla-vault /opt/monero/mgla-vault
 COPY --chmod=0755 --from=shared vault/launcher.sh /opt/monero/vault-launcher.sh
 COPY --chmod=0755 --from=shared vault/smoke-test.sh /opt/monero/vault-smoke-test
 COPY wallet-launcher.sh /opt/app/monero

@@ -55,6 +55,7 @@ fi
 exit_image="${image_prefix}-exit:${image_tag}"
 haproxy_image="${image_prefix}-haproxy:${image_tag}"
 monero_image="${image_prefix}-monero:${image_tag}"
+vault_image="${image_prefix}-vault:${image_tag}"
 
 wipe_host() {
     [[ -t 1 ]] || return 0
@@ -251,7 +252,7 @@ echo "[info] wallet vault directory: ${wallet_store_host_dir} (${wallet_vault_si
 
 export project wallet_store_host_dir wallet_vault_size
 export monero_version monero_commit
-export exit_image haproxy_image monero_image
+export exit_image haproxy_image monero_image vault_image
 export exit_a_container exit_b_container haproxy_container monero_container
 export monero_container_uid monero_container_gid
 export ext_network_container_subnet_cidr_ipv4 ext_network_container_gateway_ipv4
@@ -271,9 +272,11 @@ if [[ "${image_mode}" == "pull" ]]; then
 else
     echo "[info] building Alpine images and source-built Monero image"
     if [[ "${NO_CACHE:-0}" == "1" ]]; then
-        compose build --pull --no-cache
+        docker compose -p "${project}" --profile "${compose_profile}" --profile vault \
+            -f "${compose_file}" build --pull --no-cache
     else
-        compose build --pull
+        docker compose -p "${project}" --profile "${compose_profile}" --profile vault \
+            -f "${compose_file}" build --pull
     fi
 fi
 

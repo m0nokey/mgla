@@ -3,7 +3,10 @@
 This directory is the single source of truth for the encrypted wallet vault:
 
 - `src/main.rs` defines the authenticated vault format and KDF parameters.
-- `build.sh` is the only vault build/test entrypoint used by wallet images.
+- `build.sh` is the only vault build/test entrypoint used by the build-only
+  shared vault service.
+- `Dockerfile` builds one vault artifact that is copied into every wallet
+  image; it is never run as a separate container.
 - `launcher.sh` owns open/create/session/save/cleanup for the generic container.
 - `smoke-test.sh` is the runtime create/unpack/wrong-password check.
 

@@ -123,15 +123,15 @@ ghcr.io/m0nokey/mgla-bitcoin:latest
 
 Every image is built for `linux/amd64` and `linux/arm64`. Network images are
 built once per architecture in CI and are reused by both wallet profiles.
-Monero and the shared Rust vault are built from pinned inputs in Alpine 3.24
-builders; Electrum is built from the signed, hash-pinned upstream archive in
-an Alpine 3.24 builder. Compilers, package managers, signing tools, and build
+Monero is built from pinned inputs and Electrum from the signed, hash-pinned
+upstream archive in Alpine 3.24 builders. The shared Rust vault is built once
+by the build-only `vault` service and the exact same artifact is copied into
+each wallet image. Compilers, package managers, signing tools, and build
 caches are excluded from final images.
 
-The shared Rust vault is compiled in the wallet builder stage and copied into
-the final wallet image. It is not a runtime helper container and does not
-create a block device. Only encrypted `.mgla` vault files remain on the host;
-the decrypted shared vault exists only in the wallet container tmpfs.
+The vault is not a runtime helper container and does not create a block device.
+Only encrypted `.mgla` vault files remain on the host; the decrypted shared
+vault exists only in the wallet container tmpfs.
 
 ## Wallet data
 

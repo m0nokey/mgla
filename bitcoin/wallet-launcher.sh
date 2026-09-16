@@ -24,6 +24,7 @@ ONION_FALLBACK_SERVER="${ELECTRUM_ONION_FALLBACK_SERVER:-explorerzydxu5ecjrkwcea
 DEFAULT_SERVER="${ELECTRUM_DEFAULT_SERVER:-electrum.blockstream.info:50002:s}"
 
 SERVER_CANDIDATES=()
+discovered_server=""
 
 tty_is_tty=0
 electrum_child_pid=""
@@ -412,6 +413,10 @@ configure_electrum() {
     set_config use_exchange BitPay
     set_config history_rates true
     set_config fiat_address true
+    if [[ -n "${discovered_server}" ]] && ! set_config server "${discovered_server}"; then
+        printf '%s\n' '[error] could not restore the selected Electrum server' >&2
+        return 1
+    fi
     vault_mark_dirty
 }
 
@@ -574,6 +579,7 @@ discover_best_server() {
         return 1
     fi
 
+    discovered_server="${selected_server}"
     stop_daemon
     set_config server "${selected_server}"
     vault_mark_dirty
@@ -1370,6 +1376,17 @@ if [[ "${MGLA_CI:-0}" != 1 ]]; then
     if [[ "${vault_rc}" -ne 0 ]]; then
         exit 1
     fi
+    if ! configure_electrum; then
+        exit 1
+    fi
+    if ! discover_best_server; then
+        exit 1
+    fi
+    stop_daemon
+    if ! clear_wallet_root; then
+        printf '%s\n' '[error] could not clear the temporary discovery workspace' >&2
+        exit 1
+    fi
     if ! open_or_create_vault; then
         clear_wallet_root
         exit 1
@@ -1379,8 +1396,15 @@ fi
 if ! configure_electrum; then
     exit 1
 fi
-if ! discover_best_server; then
-    exit 1
+if [[ -n "${discovered_server}" ]]; then
+    if ! start_daemon; then
+        printf '[error] selected server did not start: %s\n' "${discovered_server}" >&2
+        exit 1
+    fi
+else
+    if ! discover_best_server; then
+        exit 1
+    fi
 fi
 
 if [[ "${MGLA_CI:-0}" == 1 ]]; then
