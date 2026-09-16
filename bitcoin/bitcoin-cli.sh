@@ -326,7 +326,7 @@ run_network_tests() {
 run_vault_checks() {
     info 'checking encrypted wallet vault'
     docker exec "${bitcoin_container}" \
-        /opt/bitcoin/vault-smoke-test /opt/bitcoin/mgla-vault
+        /bin/sh /opt/bitcoin/vault-smoke-test /opt/bitcoin/mgla-vault
     printf '%s\n' '[ok] encrypted wallet vault passed smoke test'
 }
 

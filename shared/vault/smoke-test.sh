@@ -1,11 +1,14 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
+#!/bin/sh
+set -eu
 
 vault_binary="${1:?vault binary path is required}"
-[[ -x "${vault_binary}" ]]
+if [ ! -x "${vault_binary}" ]; then
+    printf '%s\n' '[error] vault binary is missing or not executable' >&2
+    exit 1
+fi
 
 tmp="$(mktemp -d)"
-trap 'rm -rf -- "${tmp}"' EXIT
+trap 'rm -rf -- "${tmp}"' 0
 
 mkdir "${tmp}/source" "${tmp}/destination" "${tmp}/wrong"
 printf '%s\n' 'vault smoke test' > "${tmp}/source/test.wallet"

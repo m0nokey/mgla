@@ -373,7 +373,7 @@ echo "${tor_json}"
 echo "[ok] Tor SOCKS5h via HAProxy works"
 
 echo "[info] checking encrypted wallet vault"
-docker exec "${monero_container}" /opt/monero/vault-smoke-test /opt/monero/mgla-vault
+docker exec "${monero_container}" /bin/sh /opt/monero/vault-smoke-test /opt/monero/mgla-vault
 echo "[ok] encrypted wallet vault passed smoke test"
 
 echo "[info] checking verified Monero binary"
