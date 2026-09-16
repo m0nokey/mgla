@@ -793,9 +793,7 @@ jobs:
         run: python3 shared/ci/security-summary.py
 
       - name: Upload rescan SARIF
-        if: >-
-          always() &&
-          hashFiles('trivy-reports/trivy-${{ matrix.image }}-${{ matrix.architecture }}.sarif') != ''
+        if: ${{ always() && hashFiles(format('trivy-reports/trivy-{0}-{1}.sarif', matrix.image, matrix.architecture)) != '' }}
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           sarif_file: trivy-reports/trivy-${{ matrix.image }}-${{ matrix.architecture }}.sarif
@@ -803,9 +801,7 @@ jobs:
 
 
       - name: Upload latest Grype SARIF
-        if: >-
-          always() &&
-          hashFiles('grype-reports/grype-${{ matrix.image }}-${{ matrix.architecture }}.sarif') != ''
+        if: ${{ always() && hashFiles(format('grype-reports/grype-{0}-{1}.sarif', matrix.image, matrix.architecture)) != '' }}
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           sarif_file: grype-reports/grype-${{ matrix.image }}-${{ matrix.architecture }}.sarif
