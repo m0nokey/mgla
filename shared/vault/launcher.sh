@@ -1,3 +1,7 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+# shellcheck disable=SC2154
+
 # Shared encrypted-wallet vault lifecycle for every wallet launcher.
 #
 # A wallet launcher must define these variables before sourcing this file:

@@ -354,6 +354,7 @@ vault_tty_clear() {
 }
 
 # ---- shared encrypted wallet vault lifecycle ----
+# shellcheck source=../shared/vault/launcher.sh
 # shellcheck disable=SC1091
 source /opt/bitcoin/vault-launcher.sh
 

@@ -204,6 +204,7 @@ vault_pause_or_enter() {
 }
 
 # ---- shared encrypted wallet vault lifecycle ----
+# shellcheck source=../shared/vault/launcher.sh
 # shellcheck disable=SC1091
 source /opt/monero/vault-launcher.sh
 
