@@ -216,7 +216,7 @@ jobs:
           - language: python
             build_mode: none
           - language: rust
-            build_mode: manual
+            build_mode: none
 
     steps:
       - name: Check out source
@@ -229,17 +229,6 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build_mode }}
-
-      - name: Build Rust vault
-        if: matrix.language == 'rust'
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libssl-dev \
-            libsodium-dev \
-            pkg-config
-          cargo build --manifest-path shared/vault/Cargo.toml --release --locked
 
       - name: Analyze with CodeQL
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
