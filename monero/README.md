@@ -45,9 +45,11 @@ For a local source build:
 IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash ./run.sh
 ```
 
-The host stores encrypted vault files in `$HOME/.mgla/` by default. The
-launcher generates a new `.mgla` file at the fixed 128 MiB size and the Rust
-utility unpacks wallet files only into the private container tmpfs.
+The host stores shared encrypted vault files in `$HOME/.mgla/` by default.
+A single `.mgla` file can contain Monero data under `monero/` and Bitcoin data
+under `bitcoin/`. The complete decrypted vault exists only in the container's
+private tmpfs; the launcher uses the Monero subdirectory and removes the
+plaintext tree on exit.
 
 ## Network model
 

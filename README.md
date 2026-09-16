@@ -8,21 +8,23 @@ network stack.
 ## Quick start
 
 Requirements: Docker Engine or Docker Desktop with Compose v2, and Bash.
+Run the launcher as a normal user; root execution is rejected before Docker
+starts so host files are not accidentally created with root ownership.
 
 For normal use, download the repository and start the single project menu:
 
 ```bash
-git clone https://github.com/m0nokey/mgla.git \\
-&& cd mgla \\
+git clone https://github.com/m0nokey/mgla.git \
+&& cd mgla \
 && bash ./run.sh
 ```
 
 Without Git:
 
 ```bash
-install -d -m 0700 mgla \\
-&& curl -fsSL --proto '=https' "https://github.com/m0nokey/mgla/archive/refs/heads/main.tar.gz" | tar -xz --strip-components=1 -C mgla \\
-&& cd mgla \\
+install -d -m 0700 mgla \
+&& curl -fsSL --proto '=https' "https://github.com/m0nokey/mgla/archive/refs/heads/main.tar.gz" | tar -xz --strip-components=1 -C mgla \
+&& cd mgla \
 && bash ./run.sh
 ```
 
@@ -121,19 +123,19 @@ ghcr.io/m0nokey/mgla-bitcoin:latest
 
 Every image is built for `linux/amd64` and `linux/arm64`. Network images are
 built once per architecture in CI and are reused by both wallet profiles.
-Monero is built from the pinned upstream source revision in an Alpine 3.24
-builder; Electrum is built from the signed, hash-pinned upstream archive in an
-Alpine 3.24 builder. Compilers, package managers, signing tools, and build
+Monero and the shared Rust vault are built from pinned inputs in Alpine 3.24
+builders; Electrum is built from the signed, hash-pinned upstream archive in
+an Alpine 3.24 builder. Compilers, package managers, signing tools, and build
 caches are excluded from final images.
 
 The shared Rust vault is compiled in the wallet builder stage and copied into
 the final wallet image. It is not a runtime helper container and does not
-create a block device. Wallet data remains on the host only in the user-selected
-wallet directory.
+create a block device. Only encrypted `.mgla` vault files remain on the host;
+the decrypted shared vault exists only in the wallet container tmpfs.
 
 ## Wallet data
 
-Monero vaults are stored in `$HOME/.mgla/` by default:
+Shared encrypted vaults are stored in `$HOME/.mgla/` by default:
 
 ```text
 $HOME/.mgla/
@@ -141,10 +143,18 @@ $HOME/.mgla/
 └── savings.mgla
 ```
 
-Bitcoin Electrum files are stored in `$HOME/.mgla/bitcoin/` by default. Both
-paths can be overridden with the module-specific environment variables shown
-in the module documentation. Wallet files are never committed and are ignored
-by Git.
+A single `.mgla` file can contain every wallet module:
+
+```text
+personal.mgla (encrypted)
+├── monero/
+└── bitcoin/
+```
+
+The selected launcher decrypts the complete archive into its private tmpfs,
+uses only its own subdirectory, and repacks the complete archive on exit.
+Wallet files are never committed and are ignored by Git. Module-specific
+environment variables can override the host vault directory.
 
 ## Security and CI
 

@@ -1,6 +1,11 @@
 #!/bin/bash
 set -Eeuo pipefail
 
+if [[ "$(id -u)" == 0 ]]; then
+    printf '%s\n' '[error] the Monero wallet must run as a non-root user' >&2
+    exit 1
+fi
+
 tty_is_tty=0
 if [[ -r /dev/tty ]]; then
     tty_is_tty=1
@@ -97,7 +102,9 @@ trap 'cleanup' EXIT
 wallet_pid=""
 cleanup_done=0
 socks_port="${socks_port:-9095}"
-wallet_root="/monero/wallets"
+vault_root="/monero/wallets"
+vault_root_expected="/monero/wallets"
+wallet_root="${vault_root}/monero"
 vault_binary="/opt/monero/mgla-vault"
 vault_store="/monero/vault-store"
 vault_host_dir="${WALLET_VAULT_HOST_DIR:-${HOME}/.mgla}"
@@ -106,6 +113,7 @@ vault_file=""
 vault_host_path=""
 vault_loaded=0
 vault_dirty=0
+vault_layout_migrated=0
 vault_mode="${MGLA_VAULT_MODE:-}"
 vault_session_dir=""
 vault_session_socket=""
@@ -300,13 +308,13 @@ start_vault_session() {
     case "${action}" in
         open)
             "$vault_binary" session-open \
-                "${vault_file}" "${wallet_root}" "${vault_session_socket}" \
+                "${vault_file}" "${vault_root}" "${vault_session_socket}" \
                 </dev/tty >/dev/tty 2>/dev/tty &
             ;;
         create)
             "$vault_binary" session-create-generated \
-                "${vault_file}" "${vault_size}" "${wallet_root}" \
-                "${wallet_root}" "${vault_session_socket}" \
+                "${vault_file}" "${vault_size}" "${vault_root}" \
+                "${vault_root}" "${vault_session_socket}" \
                 </dev/tty >/dev/tty 2>/dev/tty &
             ;;
         *)
@@ -337,9 +345,89 @@ start_vault_session() {
 }
 
 clear_wallet_root() {
-    [[ "${wallet_root}" == "/monero/wallets" ]] || return 1
-    [[ -d "${wallet_root}" ]] || return 0
-    find "${wallet_root}" -mindepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+    [[ "${vault_root}" == "${vault_root_expected}" ]] || return 1
+    [[ -d "${vault_root}" ]] || return 0
+    find "${vault_root}" -mindepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+}
+
+move_legacy_vault_entries() {
+    local target="$1" path name target_name
+
+    target_name="${target##*/}"
+    if ! install -d -m 0700 "${target}"; then
+        return 1
+    fi
+    while IFS= read -r -d '' path; do
+        name="${path##*/}"
+        if [[ "${name}" == "${target_name}" ]]; then
+            continue
+        fi
+        if [[ "${name}" == ".mgla-wallet-type" ]]; then
+            rm -f -- "${path}"
+        else
+            mv -- "${path}" "${target}/"
+        fi
+    done < <(find "${vault_root}" -mindepth 1 -maxdepth 1 -print0)
+}
+
+legacy_monero_layout() {
+    local path name
+
+    for path in "${vault_root}"/*; do
+        if [[ ! -d "${path}" ]]; then
+            continue
+        fi
+        name="${path##*/}"
+        if [[ -f "${path}/${name}" && -f "${path}/${name}.keys" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+normalize_vault_layout() {
+    local marker="" legacy_kind=""
+
+    vault_layout_migrated=0
+    if [[ -d "${vault_root}/monero" || -d "${vault_root}/bitcoin" ]]; then
+        return 0
+    fi
+
+    if [[ -f "${vault_root}/.mgla-wallet-type" ]]; then
+        IFS= read -r marker < "${vault_root}/.mgla-wallet-type" || true
+        case "${marker}" in
+            monero|bitcoin)
+                legacy_kind="${marker}"
+                ;;
+        esac
+    fi
+    if [[ -z "${legacy_kind}" ]] && legacy_monero_layout; then
+        legacy_kind="monero"
+    fi
+    if [[ -z "${legacy_kind}" &&
+          ( -d "${vault_root}/wallets" || -f "${vault_root}/config" ) ]]; then
+        legacy_kind="bitcoin"
+    fi
+
+    if [[ -n "${legacy_kind}" ]]; then
+        if ! move_legacy_vault_entries "${vault_root}/${legacy_kind}"; then
+            return 1
+        fi
+        vault_layout_migrated=1
+        return 0
+    fi
+
+    if [[ -n "$(find "${vault_root}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+        return 1
+    fi
+    return 0
+}
+
+ensure_wallet_root() {
+    if [[ -e "${wallet_root}" && ! -d "${wallet_root}" ]]; then
+        return 1
+    fi
+    install -d -m 0700 "${wallet_root}"
 }
 
 save_vault() {
@@ -352,7 +440,7 @@ save_vault() {
         if vault_session_request pack; then
             saved=1
         fi
-    elif vault_with_tty_password pack "${vault_file}" "${wallet_root}"; then
+    elif vault_with_tty_password pack "${vault_file}" "${vault_root}"; then
         saved=1
     fi
 
@@ -438,7 +526,7 @@ choose_vault() {
 
     while true; do
         clear_screen
-        tty_print "Monero wallet vaults"
+        tty_print "Wallet vaults"
         tty_print "------------------------------------------------------------"
         tty_print "Vault directory: ${vault_host_dir}"
         tty_blank
@@ -483,8 +571,8 @@ open_or_create_vault() {
         tty_print "error: cannot access host vault directory"
         return 1
     fi
-    if ! mkdir -p "${wallet_root}" 2>/dev/null || ! chmod 700 "${wallet_root}" 2>/dev/null; then
-        tty_print "error: cannot access temporary wallet directory"
+    if ! mkdir -p "${vault_root}" 2>/dev/null || ! chmod 700 "${vault_root}" 2>/dev/null; then
+        tty_print "error: cannot access temporary vault directory"
         return 1
     fi
     if ! choose_vault; then
@@ -501,15 +589,26 @@ open_or_create_vault() {
 
             if [[ "${vault_mode}" == "session" ]]; then
                 if start_vault_session open && vault_session_request unpack; then
+                    if ! normalize_vault_layout || ! ensure_wallet_root; then
+                        stop_vault_session
+                        clear_wallet_root
+                        tty_print "error: unrecognized wallet vault layout"
+                        return 1
+                    fi
                     vault_loaded=1
-                    vault_dirty=0
+                    vault_dirty="${vault_layout_migrated}"
                     tty_print "[ok] encrypted wallet vault opened"
                     return 0
                 fi
                 stop_vault_session
-            elif vault_with_tty_password unpack "${vault_file}" "${wallet_root}"; then
+            elif vault_with_tty_password unpack "${vault_file}" "${vault_root}"; then
+                if ! normalize_vault_layout || ! ensure_wallet_root; then
+                    clear_wallet_root
+                    tty_print "error: unrecognized wallet vault layout"
+                    return 1
+                fi
                 vault_loaded=1
-                vault_dirty=0
+                vault_dirty="${vault_layout_migrated}"
                 tty_print "[ok] encrypted wallet vault opened"
                 return 0
             fi
@@ -533,6 +632,10 @@ open_or_create_vault() {
     tty_print "Wallet seed phrases can restore wallets, but not local wallet data."
     tty_blank
 
+    if ! ensure_wallet_root; then
+        tty_print "error: cannot initialize wallet directory"
+        return 1
+    fi
     if [[ "${vault_mode}" == "session" ]]; then
         if start_vault_session create; then
             vault_loaded=1
@@ -545,7 +648,7 @@ open_or_create_vault() {
         return 1
     fi
 
-    if "$vault_binary" create-generated "$vault_file" "$vault_size" "$wallet_root"; then
+    if "$vault_binary" create-generated "$vault_file" "$vault_size" "$vault_root"; then
         vault_loaded=1
         vault_dirty=0
         tty_print "[ok] encrypted wallet vault created"
@@ -1289,8 +1392,8 @@ if [[ "${rc}" -ne 0 ]]; then
     exit 1
 fi
 
-if ! mkdir -p "${wallet_root}" 2>/dev/null; then
-    tty_print "error: cannot access temporary wallet directory"
+if ! mkdir -p "${vault_root}" 2>/dev/null; then
+    tty_print "error: cannot access temporary vault directory"
     exit 1
 fi
 if ! open_or_create_vault; then

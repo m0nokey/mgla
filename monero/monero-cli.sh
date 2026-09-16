@@ -2,6 +2,11 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+if [[ "$(id -u)" == 0 ]]; then
+    printf '%s\n' '[error] the Monero launcher must be started by a non-root user' >&2
+    exit 1
+fi
+
 module_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=../shared/lib/network.sh
@@ -61,6 +66,8 @@ exit_a_container="mgla-exit-a"
 exit_b_container="mgla-exit-b"
 haproxy_container="mgla-haproxy"
 monero_container="mgla-monero"
+monero_container_uid=""
+monero_container_gid=""
 container_names=(
     "${exit_a_container}"
     "${exit_b_container}"
@@ -190,6 +197,19 @@ need() {
     }
 }
 
+set_container_identity() {
+    local uid gid
+
+    uid="$(id -u)"
+    gid="$(id -g)"
+    if [[ ! "${uid}" =~ ^[1-9][0-9]*$ || ! "${gid}" =~ ^[1-9][0-9]*$ ]]; then
+        echo "[error] the launcher must run as a non-root user" >&2
+        exit 1
+    fi
+    monero_container_uid="${uid}"
+    monero_container_gid="${gid}"
+}
+
 print_message_about_nyx() {
     cat <<MSG
 [!] If you want to monitor or manage the exit nodes (live status, circuits, bandwidth, and basic stats),
@@ -220,6 +240,7 @@ if [[ ! "${monero_commit}" =~ ^[0-9a-fA-F]{40}$ ]]; then
     exit 1
 fi
 
+set_container_identity
 generate_networks
 echo "[info] external network: ${ext_network_container_subnet_cidr_ipv4}"
 echo "[info] internal network: ${int_network_container_subnet_cidr_ipv4}"
@@ -232,6 +253,7 @@ export project wallet_store_host_dir wallet_vault_size
 export monero_version monero_commit
 export exit_image haproxy_image monero_image
 export exit_a_container exit_b_container haproxy_container monero_container
+export monero_container_uid monero_container_gid
 export ext_network_container_subnet_cidr_ipv4 ext_network_container_gateway_ipv4
 export ext_network_container_exit_a_ipv4 ext_network_container_exit_b_ipv4
 export int_network_container_subnet_cidr_ipv4 int_network_container_gateway_ipv4

@@ -25,11 +25,14 @@ RUN apk upgrade --no-cache \
         bash \
         build-base \
         ca-certificates \
+        cargo \
         curl \
         gnupg \
         libffi-dev \
         libsecp256k1-dev \
+        libsodium-dev \
         openssl-dev \
+        pkgconf \
         py3-cryptography \
         py3-pip \
         py3-setuptools \
@@ -37,9 +40,19 @@ RUN apk upgrade --no-cache \
         py3-wheel \
         python3 \
         python3-dev \
+        rust \
         tzdata \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
     && printf '%s\n' UTC > /etc/timezone
+
+WORKDIR /tmp/vault
+COPY --from=shared vault/Cargo.toml vault/Cargo.lock ./
+COPY --from=shared vault/src ./src
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    cargo test --release --locked \
+    && cargo build --release --locked \
+    && strip --strip-unneeded target/release/mgla-vault
 
 WORKDIR /tmp/electrum
 COPY requirements.lock /tmp/electrum/requirements.lock
@@ -105,7 +118,9 @@ RUN apk upgrade --no-cache \
         coreutils \
         libgcc \
         libsecp256k1 \
+        libsodium \
         libstdc++ \
+        openssl \
         py3-cryptography \
         python3 \
         tzdata \
@@ -114,9 +129,11 @@ RUN apk upgrade --no-cache \
     && addgroup -g 1000 -S electrum \
     && adduser -S -D -H -u 1000 -G electrum -s /sbin/nologin electrum \
     && install -d -m 0700 -o 1000 -g 1000 /home/electrum/.electrum \
-    && install -d -m 0755 -o root -g root /opt/app /opt/venv
+    && install -d -m 0700 -o 1000 -g 1000 /bitcoin/vault-store \
+    && install -d -m 0755 -o root -g root /opt/app /opt/bitcoin /opt/venv
 
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /tmp/vault/target/release/mgla-vault /opt/bitcoin/mgla-vault
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint
 COPY --chmod=0755 wallet-launcher.sh /opt/app/bitcoin
 COPY --chmod=0755 network-check.py /opt/app/network-check.py
@@ -127,8 +144,10 @@ RUN command -v timeout \
     && /opt/venv/bin/python -c 'import aiohttp, aiorpcx, electrum_ecc, cryptography, qrcode; print("Electrum runtime imports: OK")' \
     && test -x /opt/venv/bin/qr \
     && test -x /opt/app/network-check.py \
-    && chmod 0755 /opt/app/bitcoin /usr/local/bin/entrypoint \
-    && chown -R 1000:1000 /home/electrum /opt/venv /opt/app
+    && chmod 0755 /opt/app/bitcoin /usr/local/bin/entrypoint /opt/bitcoin/mgla-vault \
+    && ldd /opt/bitcoin/mgla-vault \
+    && if ldd /opt/bitcoin/mgla-vault | grep -q 'not found'; then exit 1; fi \
+    && chown -R 1000:1000 /home/electrum /bitcoin /opt/venv /opt/app /opt/bitcoin
 
 USER 1000:1000
 WORKDIR /opt/app

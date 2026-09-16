@@ -5,6 +5,11 @@ umask 077
 
 : "${HOME:?HOME is required}"
 
+if [[ "$(id -u)" == 0 ]]; then
+    printf '%s\n' '[error] the Bitcoin launcher must be started by a non-root user' >&2
+    exit 1
+fi
+
 module_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=../shared/lib/network.sh
@@ -15,7 +20,7 @@ compose_profile="bitcoin"
 image_project="mgla"
 compose_file="${module_dir}/../compose.yaml"
 workdir="$(mktemp -d -t "${project}.bitcoin.XXXXXXXX")"
-wallet_store_host_dir="${BITCOIN_WALLET_STORE_HOST_DIR:-${WALLET_STORE_HOST_DIR:-${HOME}/.mgla/bitcoin}}"
+wallet_store_host_dir="${BITCOIN_WALLET_STORE_HOST_DIR:-${WALLET_STORE_HOST_DIR:-${HOME}/.mgla}}"
 
 alpine_version="${ALPINE_VERSION:-3.24}"
 electrum_version="${ELECTRUM_VERSION:-4.8.2}"
@@ -322,12 +327,12 @@ run_electrum_checks() {
     local version
 
     info 'checking verified Electrum CLI'
-    version="$(docker exec "${bitcoin_container}" /opt/venv/bin/electrum \
-        --offline --version 2>/dev/null || true)"
-    [[ -n "${version}" ]] || {
-        error 'verified Electrum binary is not runnable'
+    if ! version="$(docker exec "${bitcoin_container}" /opt/venv/bin/electrum \
+        --offline --version 2>&1)"; then
+        error 'verified Electrum CLI failed to start'
+        printf '%s\n' "${version}" >&2
         return 1
-    }
+    fi
     printf '%s\n' "${version}" | head -n 1
 
     info 'checking strict wallet input validation'
@@ -385,7 +390,7 @@ main() {
     info "Electrum release: ${electrum_version}"
     info "image mode: ${image_mode}"
     info "image tag: ${image_tag}"
-    info "wallet directory: ${wallet_store_host_dir}"
+    info "vault directory: ${wallet_store_host_dir}"
 
     start_guard
     install -d -m 0700 "${wallet_store_host_dir}"

@@ -2,6 +2,11 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+if [[ "$(id -u)" == 0 ]]; then
+    printf '%s\n' '[error] run.sh must be started by a non-root user' >&2
+    exit 1
+fi
+
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 monero_launcher="$project_dir/monero/monero-cli.sh"
 bitcoin_launcher="$project_dir/bitcoin/bitcoin-cli.sh"

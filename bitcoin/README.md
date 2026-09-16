@@ -43,10 +43,14 @@ For a local source build:
 IMAGE_MODE=build IMAGE_REGISTRY= IMAGE_TAG=local bash ./run.sh
 ```
 
-The default host wallet directory is `$HOME/.mgla/bitcoin/`. Override it with:
+The selected `.mgla` file is a shared encrypted vault. It can contain Bitcoin
+data under `bitcoin/` and Monero data under `monero/`. The complete decrypted
+vault exists only in the container tmpfs; the launcher uses the Bitcoin
+subdirectory and removes the plaintext tree on exit. Override the host vault
+directory with:
 
 ```bash
-BITCOIN_WALLET_STORE_HOST_DIR=/absolute/path/to/bitcoin bash bitcoin/bitcoin-cli.sh
+BITCOIN_WALLET_STORE_HOST_DIR=/absolute/path/to/vaults bash bitcoin/bitcoin-cli.sh
 ```
 
 ## Network model
@@ -76,15 +80,17 @@ internal network, and the exits are the only services attached to the external
 bridge. Electrum's SOCKS connector performs remote DNS resolution for onion
 servers through the proxy.
 
-The launcher probes the pinned official onion candidates, selects the highest
-reported chain height among reachable servers, and uses that server for the
-session. A reported height is a routing signal, not independent proof that a
+The launcher probes the pinned official Onion candidates in order and uses
+the first working server. If none responds, it tries the hardcoded
+`electrum.blockstream.info:50002:s` fallback through the same Tor proxy.
+A reported height is displayed for diagnostics, not treated as proof that a
 remote server is honest.
 
 ## Security checks
 
-CI verifies the signed Electrum archive, locked Python dependencies, strict
-wallet input validation, direct-route blocking, Tor connectivity, and Trivy
+CI verifies the signed Electrum archive, locked Python dependencies, the
+encrypted wallet-vault binary, strict wallet input validation, direct-route
+blocking, Tor connectivity, and Trivy
 OS/library scans for all final images. The final image does not contain build
 compilers, GPG, pip, or a Bitcoin daemon.
 

@@ -3,13 +3,24 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
+if [[ "$(id -u)" == 0 ]]; then
+    printf '%s\n' '[error] the Bitcoin wallet must run as a non-root user' >&2
+    exit 1
+fi
+
 ELECTRUM_BIN="/opt/venv/bin/electrum"
 QR_BIN="/opt/venv/bin/qr"
-ELECTRUMDIR="${ELECTRUMDIR:-/home/electrum/.electrum}"
+ELECTRUMDIR="${ELECTRUMDIR:-/home/electrum/.electrum/bitcoin}"
 WALLETS_DIR="${ELECTRUMDIR}/wallets"
+
+if [[ "${ELECTRUMDIR}" != "/home/electrum/.electrum/bitcoin" ]]; then
+    printf '%s\n' '[error] ELECTRUMDIR must remain the private tmpfs wallet directory' >&2
+    exit 1
+fi
 HAPROXY_IP="${HAPROXY_IP:?HAPROXY_IP is required}"
 PROXY_CONFIG="socks5:${HAPROXY_IP}:9095"
 SERVER_SOURCE="https://github.com/spesmilo/electrum/blob/master/electrum/chains/mainnet/servers.json"
+DEFAULT_SERVER="${ELECTRUM_DEFAULT_SERVER:-electrum.blockstream.info:50002:s}"
 
 SERVER_CANDIDATES=(
     "bejqtnc64qttdempkczylydg7l3ordwugbdar7yqbndck53ukx7wnwad.onion:50002:s"
@@ -27,6 +38,22 @@ SERVER_CANDIDATES=(
 tty_is_tty=0
 electrum_child_pid=""
 probe_height=""
+vault_root="/home/electrum/.electrum"
+vault_root_expected="/home/electrum/.electrum"
+wallet_root="${ELECTRUMDIR}"
+vault_binary="/opt/bitcoin/mgla-vault"
+vault_store="/bitcoin/vault-store"
+vault_host_dir="${WALLET_VAULT_HOST_DIR:-${HOME}/.mgla}"
+vault_size="${WALLET_VAULT_SIZE:-128M}"
+vault_file=""
+vault_host_path=""
+vault_loaded=0
+vault_dirty=0
+vault_layout_migrated=0
+vault_mode="${MGLA_VAULT_MODE:-}"
+vault_session_dir=""
+vault_session_socket=""
+vault_session_pid=""
 
 readonly MAX_INPUT_LENGTH=512
 readonly MAX_BTC_SATS=2100000000000000
@@ -150,10 +177,29 @@ on_signal() {
 }
 
 cleanup() {
+    local exit_code=$?
+
+    if [[ "${cleanup_done:-0}" -eq 1 ]]; then
+        return "${exit_code}"
+    fi
+    cleanup_done=1
+
     restore_tty
     stop_daemon
+    if declare -F save_vault >/dev/null 2>&1 && [[ "${vault_loaded:-0}" -eq 1 ]]; then
+        save_vault || true
+    fi
+    if declare -F stop_vault_session >/dev/null 2>&1; then
+        stop_vault_session || true
+    fi
+    if declare -F clear_wallet_root >/dev/null 2>&1; then
+        clear_wallet_root
+    fi
+
+    return "${exit_code}"
 }
 
+cleanup_done=0
 trap cleanup EXIT
 trap on_signal INT TERM HUP QUIT
 
@@ -281,6 +327,521 @@ show_screen() {
     done
 }
 
+# The vault lifecycle is shared with the Monero launcher. These adapters keep
+# the Bitcoin launcher UI and non-interactive validation paths unchanged.
+vault_tty_blank() {
+    tty_line ""
+}
+
+vault_tty_printf() {
+    if tty_available; then
+        # shellcheck disable=SC2059
+        printf "$@" > /dev/tty
+    else
+        # shellcheck disable=SC2059
+        printf "$@"
+    fi
+}
+
+vault_read_choice() {
+    local prompt="$1" value=""
+
+    if read_line value "${prompt}"; then
+        printf '%s' "${value}"
+    else
+        printf '%s' ''
+    fi
+}
+
+vault_pause_or_enter() {
+    pause_screen
+}
+
+# ---- encrypted wallet vault lifecycle ----
+
+vault_with_tty_password() {
+    "$vault_binary" --tty-password "$@"
+}
+
+choose_vault_mode() {
+    local choice
+
+    case "${vault_mode}" in
+        prompt|session)
+            return 0
+            ;;
+    esac
+
+    while true; do
+        clear_screen
+        tty_line "Vault unlock mode"
+        tty_line "------------------------------------------------------------"
+        tty_line "Choose how the vault key is held while this launcher is running."
+        vault_tty_blank
+        tty_line "1. Prompt"
+        tty_line "   Ask for the vault password on every open and save."
+        tty_line "   The derived key is discarded after each operation."
+        vault_tty_blank
+        tty_line "2. Session"
+        tty_line "   Enter the password once and keep only the derived key"
+        tty_line "   in locked memory until the launcher exits."
+        vault_tty_blank
+        tty_line "b. Back"
+        tty_line "x. Exit"
+        vault_tty_blank
+
+        choice="$(vault_read_choice "?: ")"
+        case "${choice}" in
+            1)
+                vault_mode="prompt"
+                return 0
+                ;;
+            2)
+                vault_mode="session"
+                return 0
+                ;;
+            b|B|x|X)
+                return 2
+                ;;
+        esac
+    done
+}
+
+vault_session_request() {
+    local command="${1:-}"
+
+    [[ "${vault_mode}" == "session" ]] || return 1
+    [[ -n "${vault_session_socket}" && -S "${vault_session_socket}" ]] || return 1
+    "$vault_binary" session-request "${vault_session_socket}" "${command}" >/dev/null 2>&1
+}
+
+stop_vault_session() {
+    local pid="${vault_session_pid:-}"
+    local socket="${vault_session_socket:-}"
+    local session_dir="${vault_session_dir:-}"
+    local i
+
+    if [[ -n "${socket}" && -S "${socket}" ]]; then
+        "$vault_binary" session-request "${socket}" shutdown >/dev/null 2>&1 || true
+    fi
+
+    if [[ -n "${pid}" ]]; then
+        for ((i = 0; i < 20; i++)); do
+            if ! kill -0 "${pid}" 2>/dev/null; then
+                wait "${pid}" 2>/dev/null || true
+                break
+            fi
+            sleep 0.1
+        done
+
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill -TERM "${pid}" 2>/dev/null || true
+        fi
+        for ((i = 0; i < 20; i++)); do
+            if ! kill -0 "${pid}" 2>/dev/null; then
+                break
+            fi
+            sleep 0.1
+        done
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill -KILL "${pid}" 2>/dev/null || true
+        fi
+        wait "${pid}" 2>/dev/null || true
+    fi
+
+    if [[ -n "${socket}" ]]; then
+        rm -f -- "${socket}" 2>/dev/null || true
+    fi
+    if [[ -n "${session_dir}" ]]; then
+        rmdir -- "${session_dir}" 2>/dev/null || true
+    fi
+
+    vault_session_pid=""
+    vault_session_socket=""
+    vault_session_dir=""
+}
+
+start_vault_session() {
+    local action="${1:-}"
+    local i
+    local pid
+
+    [[ "${vault_mode}" == "session" ]] || return 0
+    if [[ -n "${vault_session_pid}" ]]; then
+        return 0
+    fi
+
+    if ! vault_session_dir="$(mktemp -d /tmp/mgla-vault-session.XXXXXX 2>/dev/null)"; then
+        tty_line "error: cannot create private vault session directory"
+        return 1
+    fi
+    if ! chmod 700 "${vault_session_dir}"; then
+        tty_line "error: cannot protect vault session directory"
+        stop_vault_session
+        return 1
+    fi
+    vault_session_socket="${vault_session_dir}/vault.sock"
+
+    tty_line "Starting protected vault session..."
+    case "${action}" in
+        open)
+            "$vault_binary" session-open \
+                "${vault_file}" "${vault_root}" "${vault_session_socket}" \
+                </dev/tty >/dev/tty 2>/dev/tty &
+            ;;
+        create)
+            "$vault_binary" session-create-generated \
+                "${vault_file}" "${vault_size}" "${vault_root}" \
+                "${vault_root}" "${vault_session_socket}" \
+                </dev/tty >/dev/tty 2>/dev/tty &
+            ;;
+        *)
+            tty_line "error: invalid vault session action"
+            stop_vault_session
+            return 1
+            ;;
+    esac
+    vault_session_pid=$!
+    pid="${vault_session_pid}"
+
+    for ((i = 0; i < 1800; i++)); do
+        if [[ -S "${vault_session_socket}" ]]; then
+            return 0
+        fi
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            wait "${pid}" 2>/dev/null || true
+            tty_line "error: vault session stopped unexpectedly"
+            stop_vault_session
+            return 1
+        fi
+        sleep 0.1
+    done
+
+    tty_line "error: vault session did not start"
+    stop_vault_session
+    return 1
+}
+
+clear_wallet_root() {
+    [[ "${vault_root}" == "${vault_root_expected}" ]] || return 1
+    [[ -d "${vault_root}" ]] || return 0
+    find "${vault_root}" -mindepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+}
+
+move_legacy_vault_entries() {
+    local target="$1" path name target_name
+
+    target_name="${target##*/}"
+    if ! install -d -m 0700 "${target}"; then
+        return 1
+    fi
+    while IFS= read -r -d '' path; do
+        name="${path##*/}"
+        if [[ "${name}" == "${target_name}" ]]; then
+            continue
+        fi
+        if [[ "${name}" == ".mgla-wallet-type" ]]; then
+            rm -f -- "${path}"
+        else
+            mv -- "${path}" "${target}/"
+        fi
+    done < <(find "${vault_root}" -mindepth 1 -maxdepth 1 -print0)
+}
+
+legacy_monero_layout() {
+    local path name
+
+    for path in "${vault_root}"/*; do
+        if [[ ! -d "${path}" ]]; then
+            continue
+        fi
+        name="${path##*/}"
+        if [[ -f "${path}/${name}" && -f "${path}/${name}.keys" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+normalize_vault_layout() {
+    local marker="" legacy_kind=""
+
+    vault_layout_migrated=0
+    if [[ -d "${vault_root}/monero" || -d "${vault_root}/bitcoin" ]]; then
+        return 0
+    fi
+
+    if [[ -f "${vault_root}/.mgla-wallet-type" ]]; then
+        IFS= read -r marker < "${vault_root}/.mgla-wallet-type" || true
+        case "${marker}" in
+            monero|bitcoin)
+                legacy_kind="${marker}"
+                ;;
+        esac
+    fi
+    if [[ -z "${legacy_kind}" ]] && legacy_monero_layout; then
+        legacy_kind="monero"
+    fi
+    if [[ -z "${legacy_kind}" &&
+          ( -d "${vault_root}/wallets" || -f "${vault_root}/config" ) ]]; then
+        legacy_kind="bitcoin"
+    fi
+
+    if [[ -n "${legacy_kind}" ]]; then
+        if ! move_legacy_vault_entries "${vault_root}/${legacy_kind}"; then
+            return 1
+        fi
+        vault_layout_migrated=1
+        return 0
+    fi
+
+    if [[ -n "$(find "${vault_root}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+        return 1
+    fi
+    return 0
+}
+
+ensure_wallet_root() {
+    if [[ -e "${wallet_root}" && ! -d "${wallet_root}" ]]; then
+        return 1
+    fi
+    install -d -m 0700 "${wallet_root}"
+}
+
+save_vault() {
+    local saved=0
+
+    [[ "${vault_loaded}" -eq 1 && "${vault_dirty}" -eq 1 ]] || return 0
+
+    tty_line "Saving encrypted wallet vault..."
+    if [[ "${vault_mode}" == "session" ]]; then
+        if vault_session_request pack; then
+            saved=1
+        fi
+    elif vault_with_tty_password pack "${vault_file}" "${vault_root}"; then
+        saved=1
+    fi
+
+    if [[ "${saved}" -eq 1 ]]; then
+        vault_dirty=0
+        tty_line "[ok] encrypted wallet vault saved"
+        return 0
+    fi
+
+    tty_line "[error] failed to save encrypted wallet vault"
+    return 1
+}
+
+vault_name_valid() {
+    [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.mgla$ ]]
+}
+
+set_vault_target() {
+    local name="$1"
+
+    vault_file="${vault_store}/${name}"
+    vault_host_path="${vault_host_dir}/${name}"
+}
+
+list_vault_names() {
+    local path name
+
+    for path in "${vault_store}"/*.mgla; do
+        [[ -f "${path}" ]] || continue
+        name="${path##*/}"
+        vault_name_valid "${name}" || continue
+        printf '%s\n' "${name}"
+    done | sort
+}
+
+prompt_new_vault() {
+    local name
+
+    while true; do
+        clear_screen
+        tty_line "Create encrypted wallet vault"
+        tty_line "------------------------------------------------------------"
+        tty_line "Enter a short name for the vault."
+        tty_line "The .mgla extension is added automatically."
+        tty_line "Allowed: A-Z, a-z, 0-9, ., _ and -"
+        vault_tty_blank
+        tty_line "b. Back"
+        vault_tty_blank
+
+        name="$(vault_read_choice "Vault name: ")"
+        case "${name}" in
+          b|B) return 2 ;;
+        esac
+
+        [[ -n "${name}" ]] || continue
+        if [[ "${name}" != *.mgla ]]; then
+            name="${name}.mgla"
+        fi
+
+        if ! vault_name_valid "${name}"; then
+            tty_line "Invalid vault name."
+            vault_pause_or_enter
+            continue
+        fi
+        if [[ -e "${vault_store}/${name}" ]]; then
+            tty_line "That vault name already exists or is reserved."
+            vault_pause_or_enter
+            continue
+        fi
+
+        set_vault_target "${name}"
+        return 0
+    done
+}
+
+choose_vault() {
+    local -a names=()
+    local name choice i
+
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] && names+=("${name}")
+    done < <(list_vault_names)
+
+    while true; do
+        clear_screen
+        tty_line "Wallet vaults"
+        tty_line "------------------------------------------------------------"
+        tty_line "Vault directory: ${vault_host_dir}"
+        vault_tty_blank
+
+        if (( ${#names[@]} == 0 )); then
+            tty_line "No encrypted vaults found."
+        else
+            tty_line "Vaults:"
+            for ((i = 0; i < ${#names[@]}; i++)); do
+                vault_tty_printf "%d.  %s\n" "$((i + 1))" "${names[i]}"
+            done
+        fi
+
+        vault_tty_blank
+        tty_line "n. Create new vault"
+        tty_line "x. Exit"
+        vault_tty_blank
+
+        choice="$(vault_read_choice "?: ")"
+        case "${choice}" in
+          n|N)
+            prompt_new_vault && return 0
+            ;;
+          x|X)
+            return 1
+            ;;
+        esac
+
+        [[ "${choice}" =~ ^[0-9]+$ ]] || continue
+        (( ${#names[@]} > 0 && choice >= 1 && choice <= ${#names[@]} )) || continue
+        set_vault_target "${names[$((choice - 1))]}"
+        return 0
+    done
+}
+
+open_or_create_vault() {
+    if [[ ! -x "${vault_binary}" ]]; then
+        tty_line "error: vault binary is missing"
+        return 1
+    fi
+    if ! mkdir -p "${vault_store}" 2>/dev/null || ! chmod 700 "${vault_store}" 2>/dev/null; then
+        tty_line "error: cannot access host vault directory"
+        return 1
+    fi
+    if ! mkdir -p "${vault_root}" 2>/dev/null || ! chmod 700 "${vault_root}" 2>/dev/null; then
+        tty_line "error: cannot access temporary vault directory"
+        return 1
+    fi
+    if ! choose_vault; then
+        return 1
+    fi
+
+    if [[ -f "${vault_file}" ]]; then
+        while true; do
+            clear_screen
+            tty_line "Open encrypted wallet vault"
+            tty_line "------------------------------------------------------------"
+            tty_line "Vault file: ${vault_host_path}"
+            vault_tty_blank
+
+            if [[ "${vault_mode}" == "session" ]]; then
+                if start_vault_session open && vault_session_request unpack; then
+                    if ! normalize_vault_layout || ! ensure_wallet_root; then
+                        stop_vault_session
+                        clear_wallet_root
+                        tty_line "error: unrecognized wallet vault layout"
+                        return 1
+                    fi
+                    vault_loaded=1
+                    vault_dirty="${vault_layout_migrated}"
+                    tty_line "[ok] encrypted wallet vault opened"
+                    return 0
+                fi
+                stop_vault_session
+            elif vault_with_tty_password unpack "${vault_file}" "${vault_root}"; then
+                if ! normalize_vault_layout || ! ensure_wallet_root; then
+                    clear_wallet_root
+                    tty_line "error: unrecognized wallet vault layout"
+                    return 1
+                fi
+                vault_loaded=1
+                vault_dirty="${vault_layout_migrated}"
+                tty_line "[ok] encrypted wallet vault opened"
+                return 0
+            fi
+
+            clear_wallet_root
+            tty_line "error: wrong password or damaged vault"
+            vault_tty_blank
+            choice="$(vault_read_choice "Press Enter to try again, or x to exit: ")"
+            [[ "${choice}" =~ ^[xX]$ ]] && return 1
+        done
+    fi
+
+    clear_screen
+    tty_line "Create encrypted wallet vault"
+    tty_line "------------------------------------------------------------"
+    tty_line "No vault found at: ${vault_host_path}"
+    tty_line "A fixed-size ${vault_size} vault will be created."
+    vault_tty_blank
+    tty_line "A random password will be shown once. Save it offline."
+    tty_line "If it is lost, the vault cannot be opened again."
+    tty_line "Wallet seed phrases can restore wallets, but not local wallet data."
+    vault_tty_blank
+
+    if ! ensure_wallet_root; then
+        tty_line "error: cannot initialize wallet directory"
+        return 1
+    fi
+    if [[ "${vault_mode}" == "session" ]]; then
+        if start_vault_session create; then
+            vault_loaded=1
+            vault_dirty=0
+            tty_line "[ok] encrypted wallet vault created"
+            vault_pause_or_enter
+            return 0
+        fi
+        tty_line "error: failed to create encrypted wallet vault"
+        return 1
+    fi
+
+    if "$vault_binary" create-generated "$vault_file" "$vault_size" "$vault_root"; then
+        vault_loaded=1
+        vault_dirty=0
+        tty_line "[ok] encrypted wallet vault created"
+        vault_pause_or_enter
+        return 0
+    else
+        rc=$?
+        if [[ "$rc" -eq 2 ]]; then
+            return 1
+        fi
+        tty_line "error: failed to create encrypted wallet vault"
+        return 1
+    fi
+}
+
 json_value() {
     local key="$1"
     awk -v key="\"${key}\"" '
@@ -344,6 +905,7 @@ configure_electrum() {
     set_config use_exchange BitPay
     set_config history_rates true
     set_config fiat_address true
+    vault_dirty=1
 }
 
 wait_for_connection() {
@@ -394,44 +956,58 @@ probe_server() {
 }
 
 discover_best_server() {
-    local best_server="" best_height=-1 candidate index total
+    local selected_server="" selected_height="" candidate index total scan=0
     total="${#SERVER_CANDIDATES[@]}"
 
-    screen_header "Electrum onion discovery" "Selecting the highest reported chain height through Tor."
+    screen_header "Electrum onion discovery" "Selecting the first working server through Tor."
     tty_line "Proxy: HAProxy SOCKS5 with remote DNS at ${HAPROXY_IP}:9095"
     tty_line "Candidates: ${total} official .onion servers"
     tty_line "Source: ${SERVER_SOURCE}"
+    tty_line "Fallback: ${DEFAULT_SERVER}"
     tty_line ''
 
     for index in "${!SERVER_CANDIDATES[@]}"; do
         candidate="${SERVER_CANDIDATES[${index}]}"
-        printf '[scan %02d/%02d] %s ... ' "$((index + 1))" "${total}" "${candidate}"
+        scan=$((scan + 1))
+        printf '[scan %02d] %s ... ' "${scan}" "${candidate}"
         if probe_server "${candidate}"; then
             printf 'height=%s\n' "${probe_height}"
-            if (( probe_height > best_height )); then
-                best_height="${probe_height}"
-                best_server="${candidate}"
-            fi
+            selected_server="${candidate}"
+            selected_height="${probe_height}"
+            break
+        fi
+        printf '%s\n' 'unavailable'
+    done
+
+    if [[ -z "${selected_server}" ]]; then
+        tty_line ''
+        tty_line 'No official Onion server responded; trying the default Electrum server through Tor.'
+        printf '[fallback] %s ... ' "${DEFAULT_SERVER}"
+        if probe_server "${DEFAULT_SERVER}"; then
+            printf 'height=%s\n' "${probe_height}"
+            selected_server="${DEFAULT_SERVER}"
+            selected_height="${probe_height}"
         else
             printf '%s\n' 'unavailable'
         fi
-    done
+    fi
 
-    if [[ -z "${best_server}" ]]; then
-        printf '%s\n' '[error] no working official Electrum onion server was found' >&2
+    if [[ -z "${selected_server}" ]]; then
+        printf '%s\n' '[error] no working Electrum server was found' >&2
         return 1
     fi
 
     stop_daemon
-    set_config server "${best_server}"
+    set_config server "${selected_server}"
+    vault_dirty=1
     if ! start_daemon; then
-        printf '[error] selected server did not start: %s\n' "${best_server}" >&2
+        printf '[error] selected server did not start: %s\n' "${selected_server}" >&2
         return 1
     fi
 
-    screen_header "Electrum onion discovery" "A working server was selected through Tor."
-    tty_line "Server: ${best_server}"
-    tty_line "Reported height: ${best_height}"
+    screen_header "Electrum onion discovery" "The first working server was selected through Tor."
+    tty_line "Server: ${selected_server}"
+    tty_line "Reported height: ${selected_height}"
     tty_line 'Transport: SOCKS5 with remote DNS through HAProxy'
     tty_line ''
     return 0
@@ -650,6 +1226,7 @@ unlock_wallet() {
     tty_line 'Enter the wallet password in Electrum.'
     tty_line 'The password is read by Electrum and is not stored by this launcher.'
     tty_line ''
+    vault_dirty=1
     electrum_tty -w "${wallet}" load_wallet
 }
 
@@ -1080,6 +1657,7 @@ send_btc() {
 
 wallet_menu() {
     local wallet="$1" choice rc
+    vault_dirty=1
     while true; do
         screen_header 'Bitcoin Electrum wallet' "Wallet: $(basename "${wallet}")"
         tty_line '1. Balance'
@@ -1202,6 +1780,23 @@ if [[ "${MGLA_VALIDATE_ONLY:-0}" == 1 ]]; then
         exit 0
     fi
     exit 1
+fi
+
+if [[ "${MGLA_CI:-0}" != 1 ]]; then
+    set +e
+    choose_vault_mode
+    vault_rc=$?
+    set -e
+    if [[ "${vault_rc}" -eq 2 ]]; then
+        exit 0
+    fi
+    if [[ "${vault_rc}" -ne 0 ]]; then
+        exit 1
+    fi
+    if ! open_or_create_vault; then
+        clear_wallet_root
+        exit 1
+    fi
 fi
 
 if ! configure_electrum; then
