@@ -27,3 +27,5 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 # their runtime image; the vault never runs as a separate container.
 FROM scratch
 COPY --from=builder /src/vault/target/release/mgla-vault /mgla-vault
+# Keep the build-only artifact non-root for image policy scanners.
+USER 65532:65532
