@@ -8,7 +8,8 @@ This directory is the single source of truth for the encrypted wallet vault:
 - `smoke-test.sh` is the runtime create/unpack/wrong-password check.
 
 To add a wallet, keep wallet-specific paths and UI in its launcher, define the
-variables and UI adapters documented at the top of `launcher.sh`, then source
-the image-local copy of `launcher.sh`. Copy the shared build, launcher, and
-smoke-test files from the `shared` build context and merge
+five UI adapters documented at the top of `launcher.sh`, source the image-local
+copy, then call `vault_configure` with the wallet-specific paths and type. Copy
+the shared build, launcher, and smoke-test files from the `shared` build context
+and merge
 `&mgla-vault-resources` in `compose.yaml`.

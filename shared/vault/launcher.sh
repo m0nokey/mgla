@@ -1,21 +1,63 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
-# shellcheck disable=SC2154
 
 # Shared encrypted-wallet vault lifecycle for every wallet launcher.
 #
-# A wallet launcher must define these variables before sourcing this file:
-#   vault_root, vault_root_expected, wallet_root, vault_wallet_type,
-#   vault_binary, vault_store, vault_host_dir, vault_size, vault_file,
-#   vault_host_path, vault_loaded, vault_dirty, vault_layout_migrated,
-#   vault_mode, vault_session_dir, vault_session_socket, vault_session_pid
-#
-# It must also provide these UI adapters:
+# A wallet launcher must provide these UI adapters, source this file, and call
+# vault_configure with its wallet-specific paths and type:
 #   vault_tty_clear, vault_tty_blank, vault_tty_printf,
 #   vault_read_choice, vault_pause_or_enter
 #
 # The adapters are the only wallet-specific part of this module. Password
 # handling, session handling, layout migration, and persistence stay here.
+
+vault_root=""
+vault_root_expected=""
+wallet_root=""
+vault_wallet_type=""
+vault_binary=""
+vault_store=""
+vault_host_dir=""
+vault_size=""
+vault_file=""
+vault_host_path=""
+vault_loaded=0
+vault_dirty=0
+vault_layout_migrated=0
+vault_mode=""
+vault_session_dir=""
+vault_session_socket=""
+vault_session_pid=""
+
+vault_configure() {
+    if [[ "$#" -ne 8 ]]; then
+        printf '%s\n' '[error] shared vault configuration requires eight arguments' >&2
+        return 2
+    fi
+
+    local root="$1" expected_root="$2" wallet="$3" wallet_type="$4"
+    local binary="$5" store="$6" host_dir="$7" size="$8"
+
+    vault_root="${root}"
+    vault_root_expected="${expected_root}"
+    wallet_root="${wallet}"
+    vault_wallet_type="${wallet_type}"
+    vault_binary="${binary}"
+    vault_store="${store}"
+    vault_host_dir="${host_dir}"
+    vault_size="${size}"
+    vault_file=""
+    vault_host_path=""
+    vault_loaded=0
+    vault_dirty=0
+    vault_layout_migrated=0
+    vault_mode="${MGLA_VAULT_MODE:-}"
+    vault_session_dir=""
+    vault_session_socket=""
+    vault_session_pid=""
+
+    vault_validate_interface
+}
 
 vault_validate_interface() {
     local required
@@ -333,6 +375,10 @@ save_vault() {
     return 1
 }
 
+vault_mark_dirty() {
+    vault_dirty=1
+}
+
 vault_name_valid() {
     [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.mgla$ ]]
 }
@@ -548,5 +594,3 @@ open_or_create_vault() {
         return 1
     fi
 }
-
-vault_validate_interface

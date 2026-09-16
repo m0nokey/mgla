@@ -43,8 +43,12 @@ const ARGON2ID_ALGORITHM: c_int = 2;
 const GENERATED_PASSWORD_CORE_LENGTH: usize = 47;
 const GENERATED_PASSWORD_LENGTH: usize = GENERATED_PASSWORD_CORE_LENGTH + 1;
 const GENERATED_PASSWORD_MIN_SPECIALS: usize = 7;
+// These are public password-policy alphabets; characters are selected with
+// the CSPRNG below and are not password or key material.
+// codeql[rust/hard-coded-cryptographic-value]
 const GENERATED_PASSWORD_LETTERS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const GENERATED_PASSWORD_ALPHABET: &[u8] =
+    // codeql[rust/hard-coded-cryptographic-value]
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789<>*+!?_=#@%&";
 const GENERATED_PASSWORD_SPECIALS: &[u8] = b"<>*+!?_=#@%&";
 const HMAC_CONTEXT: &[u8] = b"MGLA-RAW-V3-HMAC";
@@ -225,8 +229,9 @@ fn inspect_image(path: &Path) -> VaultResult<VaultLayout> {
     let mut file = File::open(path)?;
     let mut envelope = [0u8; ENVELOPE_SECTOR_SIZE];
     file.read_exact(&mut envelope)?;
-    let mut salt = [0u8; SALT_SIZE];
-    salt.copy_from_slice(&envelope[ENVELOPE_SALT_OFFSET..ENVELOPE_SALT_OFFSET + SALT_SIZE]);
+    let salt: [u8; SALT_SIZE] = envelope[ENVELOPE_SALT_OFFSET..ENVELOPE_SALT_OFFSET + SALT_SIZE]
+        .try_into()
+        .map_err(|_| invalid_data("vault envelope salt has invalid length"))?;
     envelope.zeroize();
     VaultLayout::from_image(image_size, salt)
 }

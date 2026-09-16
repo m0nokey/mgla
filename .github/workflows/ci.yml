@@ -77,7 +77,8 @@ jobs:
             printf '%s\n' run.sh
           )
           test "${#shell_files[@]}" -gt 0
-          shellcheck --severity=warning "${shell_files[@]}"
+          # Follow the checked-in shared source modules and their contracts.
+          shellcheck --external-sources --severity=warning "${shell_files[@]}"
 
       - name: Validate Monero Compose profile
         run: |

@@ -102,23 +102,6 @@ trap 'cleanup' EXIT
 wallet_pid=""
 cleanup_done=0
 socks_port="${socks_port:-9095}"
-vault_root="/monero/wallets"
-vault_root_expected="/monero/wallets"
-wallet_root="${vault_root}/monero"
-vault_wallet_type="monero"
-vault_binary="/opt/monero/mgla-vault"
-vault_store="/monero/vault-store"
-vault_host_dir="${WALLET_VAULT_HOST_DIR:-${HOME}/.mgla}"
-vault_size="${WALLET_VAULT_SIZE:-128M}"
-vault_file=""
-vault_host_path=""
-vault_loaded=0
-vault_dirty=0
-vault_layout_migrated=0
-vault_mode="${MGLA_VAULT_MODE:-}"
-vault_session_dir=""
-vault_session_socket=""
-vault_session_pid=""
 daemon_mode="${daemon_mode:-untrusted}"
 
 if [[ -z "${HAPROXY_IP:-}" ]]; then
@@ -207,6 +190,15 @@ vault_pause_or_enter() {
 # shellcheck source=../shared/vault/launcher.sh
 # shellcheck disable=SC1091
 source /opt/monero/vault-launcher.sh
+vault_configure \
+    "/monero/wallets" \
+    "/monero/wallets" \
+    "/monero/wallets/monero" \
+    "monero" \
+    "/opt/monero/mgla-vault" \
+    "/monero/vault-store" \
+    "${WALLET_VAULT_HOST_DIR:-${HOME}/.mgla}" \
+    "${WALLET_VAULT_SIZE:-128M}"
 
 
 _xmr_nodes_raw() {
@@ -699,7 +691,7 @@ create_wallet() {
     fi
 
     clear_screen
-    vault_dirty=1
+    vault_mark_dirty
     if run_wallet_cli_tty --generate-new-wallet "${wallet_file}"; then
         rc=0
     else
@@ -736,7 +728,7 @@ restore_wallet() {
 
         if [[ "${mode}" == "ZERO" ]]; then
             clear_screen
-            vault_dirty=1
+            vault_mark_dirty
             if run_wallet_cli_tty \
                 --restore-deterministic-wallet \
                 --restore-height "0" \
@@ -768,7 +760,7 @@ restore_wallet() {
             [[ -n "${restore_height:-}" ]] || continue
 
             clear_screen
-            vault_dirty=1
+            vault_mark_dirty
             if run_wallet_cli_tty \
                 --restore-deterministic-wallet \
                 --restore-height "${restore_height}" \
@@ -810,7 +802,7 @@ restore_wallet() {
             fi
 
             clear_screen
-            vault_dirty=1
+            vault_mark_dirty
             if run_wallet_cli_tty \
                 --restore-deterministic-wallet \
                 --restore-height "${restore_height}" \
@@ -847,7 +839,7 @@ run_selected_wallet() {
         tty_blank
 
         set +e
-        vault_dirty=1
+        vault_mark_dirty
         run_wallet_process --wallet-file "${wallet_file}" "$@"
         rc=$?
         set -e

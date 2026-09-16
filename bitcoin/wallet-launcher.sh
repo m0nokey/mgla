@@ -28,24 +28,6 @@ SERVER_CANDIDATES=()
 tty_is_tty=0
 electrum_child_pid=""
 probe_height=""
-vault_root="/home/electrum/.electrum"
-vault_root_expected="/home/electrum/.electrum"
-wallet_root="${ELECTRUMDIR}"
-vault_wallet_type="bitcoin"
-vault_binary="/opt/bitcoin/mgla-vault"
-vault_store="/bitcoin/vault-store"
-vault_host_dir="${WALLET_VAULT_HOST_DIR:-${HOME}/.mgla}"
-vault_size="${WALLET_VAULT_SIZE:-128M}"
-vault_file=""
-vault_host_path=""
-vault_loaded=0
-vault_dirty=0
-vault_layout_migrated=0
-vault_mode="${MGLA_VAULT_MODE:-}"
-vault_session_dir=""
-vault_session_socket=""
-vault_session_pid=""
-
 readonly MAX_INPUT_LENGTH=512
 readonly MAX_BTC_SATS=2100000000000000
 readonly MAX_FEE_RATE_MILLISATVB=1000000000
@@ -357,6 +339,15 @@ vault_tty_clear() {
 # shellcheck source=../shared/vault/launcher.sh
 # shellcheck disable=SC1091
 source /opt/bitcoin/vault-launcher.sh
+vault_configure \
+    "/home/electrum/.electrum" \
+    "/home/electrum/.electrum" \
+    "${ELECTRUMDIR}" \
+    "bitcoin" \
+    "/opt/bitcoin/mgla-vault" \
+    "/bitcoin/vault-store" \
+    "${WALLET_VAULT_HOST_DIR:-${HOME}/.mgla}" \
+    "${WALLET_VAULT_SIZE:-128M}"
 
 
 json_value() {
@@ -422,7 +413,7 @@ configure_electrum() {
     set_config use_exchange BitPay
     set_config history_rates true
     set_config fiat_address true
-    vault_dirty=1
+    vault_mark_dirty
 }
 
 wait_for_connection() {
@@ -586,7 +577,7 @@ discover_best_server() {
 
     stop_daemon
     set_config server "${selected_server}"
-    vault_dirty=1
+    vault_mark_dirty
     if ! start_daemon; then
         printf '[error] selected server did not start: %s\n' "${selected_server}" >&2
         return 1
@@ -813,7 +804,7 @@ unlock_wallet() {
     tty_line 'Enter the wallet password in Electrum.'
     tty_line 'The password is read by Electrum and is not stored by this launcher.'
     tty_line ''
-    vault_dirty=1
+    vault_mark_dirty
     electrum_tty -w "${wallet}" load_wallet
 }
 
@@ -1244,7 +1235,7 @@ send_btc() {
 
 wallet_menu() {
     local wallet="$1" choice rc
-    vault_dirty=1
+    vault_mark_dirty
     while true; do
         screen_header 'Bitcoin Electrum wallet' "Wallet: $(basename "${wallet}")"
         tty_line '1. Balance'
