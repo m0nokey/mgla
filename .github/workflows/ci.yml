@@ -92,6 +92,7 @@ jobs:
           export haproxy_image=mgla-haproxy:lint
           export monero_image=mgla-monero:lint
           export bitcoin_image=mgla-bitcoin:lint
+          export vault_image=mgla-vault:lint
           export alpine_version="${ALPINE_VERSION}"
           export monero_version="${MONERO_VERSION}"
           export monero_commit="${MONERO_COMMIT}"
@@ -109,7 +110,7 @@ jobs:
           export int_network_container_exit_b_ipv4=10.91.0.3
           export int_network_container_haproxy_ipv4=10.91.0.4
           export int_network_container_app_ipv4=10.91.0.5
-          docker compose --ansi never --profile monero -f compose.yaml config --quiet
+          docker compose --ansi never --profile monero --profile vault -f compose.yaml config --quiet
 
       - name: Validate Bitcoin Compose profile
         run: |
@@ -123,6 +124,7 @@ jobs:
           export haproxy_image=mgla-haproxy:lint
           export monero_image=mgla-monero:lint
           export bitcoin_image=mgla-bitcoin:lint
+          export vault_image=mgla-vault:lint
           export alpine_version="${ALPINE_VERSION}"
           export monero_version="${MONERO_VERSION}"
           export monero_commit="${MONERO_COMMIT}"
@@ -140,7 +142,7 @@ jobs:
           export int_network_container_exit_b_ipv4=10.91.0.3
           export int_network_container_haproxy_ipv4=10.91.0.4
           export int_network_container_app_ipv4=10.91.0.5
-          docker compose --ansi never --profile bitcoin -f compose.yaml config --quiet
+          docker compose --ansi never --profile bitcoin --profile vault -f compose.yaml config --quiet
 
       - name: Compile Python helpers
         run: python3 -m py_compile shared/ci/security-summary.py bitcoin/network-check.py
