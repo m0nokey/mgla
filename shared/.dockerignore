@@ -1,9 +1,3 @@
 **
 !vault/
-!vault/Cargo.toml
-!vault/Cargo.lock
-!vault/src/
-!vault/src/**
-!vault/build.sh
-!vault/launcher.sh
-!vault/smoke-test.sh
+!vault/**
