@@ -291,9 +291,8 @@ prompt_value() {
 pause_screen() {
     local value
     tty_line ''
-    tty_line 'Press Enter to return.'
-    tty_line ''
-    if read_line value '?: '; then
+    tty_line 'Press Enter or Space to return, or x to exit.'
+    if read_line value ''; then
         if is_exit "${value}"; then
             exit_app
         fi
@@ -305,13 +304,16 @@ show_screen() {
     shift
     while true; do
         "${renderer}" "$@"
-        if ! read_line action '?: '; then
+        tty_line ''
+        tty_line 'Press Enter or Space to return.'
+        if ! read_line action ''; then
             return 0
         fi
         if is_exit "${action}"; then
             exit_app
         fi
-        if is_back "${action}" || [[ -z "${action}" ]]; then
+        if is_back "${action}" ||
+           [[ -z "${action}" || "${action}" == ' ' ]]; then
             return 0
         fi
     done
@@ -816,7 +818,6 @@ open_or_create_vault() {
             vault_loaded=1
             vault_dirty=0
             tty_line "[ok] encrypted wallet vault created"
-            vault_pause_or_enter
             return 0
         fi
         tty_line "error: failed to create encrypted wallet vault"
@@ -827,7 +828,6 @@ open_or_create_vault() {
         vault_loaded=1
         vault_dirty=0
         tty_line "[ok] encrypted wallet vault created"
-        vault_pause_or_enter
         return 0
     else
         rc=$?
@@ -1324,8 +1324,8 @@ create_wallet() {
     tty_line "${seed}"
     tty_line ''
     tty_line 'After saving the seed, press Enter to set the wallet password.'
-    tty_line 'x. Exit'
-    if ! read_line answer '?: '; then
+    tty_line 'Press x to exit.'
+    if ! read_line answer ''; then
         unset seed
         return 0
     fi

@@ -101,8 +101,9 @@ CI builds both supported architectures and verifies:
 - the pinned Monero source revision and Alpine runtime links;
 - the shared Rust vault tests, formatting, Clippy, and advisory audit;
 - direct-route blocking and Tor SOCKS5h connectivity;
-- Trivy OS and library findings for exit, HAProxy, and Monero images.
+- OSV and CodeQL dependency/source checks;
+- Trivy and Grype OS and library findings for exit, HAProxy, and Monero images.
 
-The initial release policy blocks fixable `HIGH` and `CRITICAL` findings. See
+The release policy blocks fixable `MEDIUM`, `HIGH`, and `CRITICAL` findings. See
 the [latest CI workflow](https://github.com/m0nokey/mgla/actions/workflows/ci.yml)
 for the Summary table and SARIF reports.

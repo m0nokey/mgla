@@ -66,13 +66,14 @@ def load_counts(path):
 
 
 def main():
-    reports = sorted(Path("trivy-reports").glob("*.sarif"))
+    reports = sorted(Path("trivy-reports").glob("trivy-*.sarif"))
     if not reports:
         raise SystemExit("No SARIF reports found")
 
     rows = []
     for path in reports:
-        image, architecture = path.stem.rsplit("-", 1)
+        report_name = path.stem.removeprefix("trivy-")
+        image, architecture = report_name.rsplit("-", 1)
         counts = load_counts(path)
         total = sum(counts.values())
         rows.append((image, architecture, counts, total))
@@ -98,8 +99,9 @@ def main():
     lines.extend(
         (
             "",
-            "Reports include OS and library vulnerabilities from Trivy. "
-            "The blocking policy remains fixable HIGH and CRITICAL findings.",
+            "Trivy reports OS and library vulnerabilities. "
+            "Grype independently checks the same images. "
+            "The blocking policy is fixable MEDIUM, HIGH, and CRITICAL findings.",
             "",
         )
     )

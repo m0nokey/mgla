@@ -33,7 +33,7 @@ RUN apk upgrade --no-cache \
         libsodium-dev \
         openssl-dev \
         pkgconf \
-        py3-cryptography \
+        py3-cffi \
         py3-pip \
         py3-setuptools \
         py3-virtualenv \
@@ -115,14 +115,13 @@ RUN apk upgrade --no-cache \
     && apk add --no-cache \
         bash \
         ca-certificates \
-        coreutils \
         curl \
         libgcc \
         libsecp256k1 \
         libsodium \
         libstdc++ \
         openssl \
-        py3-cryptography \
+        py3-cffi \
         python3 \
         tzdata \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
@@ -141,9 +140,10 @@ COPY --chmod=0755 network-check.py /opt/app/network-check.py
 
 RUN command -v curl \
     && command -v timeout \
+    && command -v stty \
     && test -e /usr/share/zoneinfo/UTC \
     && /opt/venv/bin/electrum --offline --version \
-    && /opt/venv/bin/python -c 'import aiohttp, aiorpcx, electrum_ecc, cryptography, qrcode; print("Electrum runtime imports: OK")' \
+    && /opt/venv/bin/python -c 'import aiohttp, aiorpcx, cffi, electrum_ecc, cryptography, qrcode; assert cryptography.__version__ == "50.0.1", cryptography.__version__; print("Electrum runtime imports: OK")' \
     && test -x /opt/venv/bin/qr \
     && test -x /opt/app/network-check.py \
     && chmod 0755 /opt/app/bitcoin /usr/local/bin/entrypoint /opt/bitcoin/mgla-vault \

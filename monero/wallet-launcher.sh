@@ -641,7 +641,6 @@ open_or_create_vault() {
             vault_loaded=1
             vault_dirty=0
             tty_print "[ok] encrypted wallet vault created"
-            pause_or_enter
             return 0
         fi
         tty_print "error: failed to create encrypted wallet vault"
@@ -652,7 +651,6 @@ open_or_create_vault() {
         vault_loaded=1
         vault_dirty=0
         tty_print "[ok] encrypted wallet vault created"
-        pause_or_enter
         return 0
     else
         rc=$?

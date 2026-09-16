@@ -88,9 +88,10 @@ remote server is honest.
 
 CI verifies the signed Electrum archive, locked Python dependencies, the
 encrypted wallet-vault binary, strict wallet input validation, direct-route
-blocking, Tor connectivity, and Trivy
-OS/library scans for all final images. The final image does not contain build
-compilers, GPG, pip, or a Bitcoin daemon.
+blocking, Tor connectivity, OSV and CodeQL checks, and Trivy and Grype
+OS/library scans for all final images. The release gate blocks fixable
+`MEDIUM`, `HIGH`, and `CRITICAL` findings. The final image does not contain
+build compilers, GPG, pip, or a Bitcoin daemon.
 
 The shared root workflow builds native amd64 and arm64 images and publishes
 only after the integration and security gates pass. See the [latest CI

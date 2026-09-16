@@ -169,10 +169,15 @@ The single `mgla CI` workflow performs:
 - actionlint, ShellCheck, Compose, Python, Rust format, Clippy, and advisory checks;
 - Tor integration and direct-route blocking tests for both wallet profiles;
 - Trivy Dockerfile/Compose misconfiguration checks;
-- Trivy OS and library scans for all four final images;
+- Trivy repository secret scanning and OSV dependency scanning;
+- CodeQL analysis for GitHub Actions, Python, and Rust;
+- Trivy and Grype OS and library scans for all four final images;
 - SARIF upload to **Security → Code scanning**;
 - a per-image table in the workflow **Summary**;
 - scheduled rescans of every published `latest` image.
+
+The release gate blocks fixable `MEDIUM`, `HIGH`, and `CRITICAL` findings;
+unfixed findings remain visible in the uploaded reports for review.
 
 Validation jobs have read-only permissions. Only the isolated `publish` job on
 `main` receives `packages: write`. It pushes architecture tags first, verifies
