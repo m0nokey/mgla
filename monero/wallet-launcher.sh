@@ -665,59 +665,8 @@ open_or_create_vault() {
 }
 
 _xmr_nodes_raw() {
-    local json=""
     local html=""
-    local ditatompel_nodes=""
-    local monero_fail_nodes=""
     local url
-
-    # The old launcher scraped an onion mirror whose HTML format is no longer
-    # stable. Prefer machine-readable lists and keep every request behind Tor.
-    url='https://xmr.ditatompel.com/api/v1/nodes?protocol=tor&nettype=mainnet&status=1&limit=100&sort_by=uptime&sort_direction=desc'
-    json="$(curl -fsS -L --max-time 15 --proxy "socks5h://${proxy}" "$url" 2>/dev/null || true)"
-    if [[ -n "${json}" ]]; then
-        ditatompel_nodes="$(printf '%s' "$json" \
-          | tr '{' '\n' \
-          | awk '
-            /"hostname"[[:space:]]*:/ &&
-            /"port"[[:space:]]*:/ &&
-            /"is_tor"[[:space:]]*:[[:space:]]*true/ &&
-            /"is_available"[[:space:]]*:[[:space:]]*true/ &&
-            /"nettype"[[:space:]]*:[[:space:]]*"mainnet"/ {
-              h=$0
-              sub(/.*"hostname"[[:space:]]*:[[:space:]]*"/, "", h)
-              sub(/".*/, "", h)
-
-              p=$0
-              sub(/.*"port"[[:space:]]*:[[:space:]]*/, "", p)
-              sub(/[^0-9].*/, "", p)
-
-              b=$0
-              sub(/.*"height"[[:space:]]*:[[:space:]]*/, "", b)
-              sub(/[^0-9].*/, "", b)
-
-              if (length(h)==62 && h ~ /^[a-z2-7]+[.]onion$/ && p >= 1 && p <= 65535)
-                printf "%s\t%s\t%s\n", h,p,(b == "" ? 0 : b)
-            }' || true
-        )"
-    fi
-
-    # monero.fail publishes a compact JSON feed. Extract only v3 onion
-    # addresses, regardless of the surrounding JSON schema.
-    url='https://monero.fail/nodes.json'
-    json="$(curl -fsS -L --max-time 15 --proxy "socks5h://${proxy}" "$url" 2>/dev/null || true)"
-    if [[ -n "${json}" ]]; then
-        monero_fail_nodes="$(printf '%s' "$json" \
-          | grep -Eo '[a-z2-7]{56}[.]onion:[0-9]{1,5}' \
-          | awk -F: '{ if ($2 >= 1 && $2 <= 65535) printf "%s\t%s\t0\n", $1,$2 }' \
-          || true
-        )"
-    fi
-
-    if [[ -n "${ditatompel_nodes}" || -n "${monero_fail_nodes}" ]]; then
-        printf '%s\n' "${ditatompel_nodes}" "${monero_fail_nodes}"
-        return 0
-    fi
 
     # Last-resort compatibility path for the original onion mirror. This is
     # intentionally bounded and is used only when the current feeds are empty.

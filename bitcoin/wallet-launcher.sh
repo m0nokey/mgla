@@ -19,21 +19,11 @@ if [[ "${ELECTRUMDIR}" != "/home/electrum/.electrum/bitcoin" ]]; then
 fi
 HAPROXY_IP="${HAPROXY_IP:?HAPROXY_IP is required}"
 PROXY_CONFIG="socks5:${HAPROXY_IP}:9095"
-SERVER_SOURCE="https://github.com/spesmilo/electrum/blob/master/electrum/chains/mainnet/servers.json"
+SERVER_SOURCE="https://raw.githubusercontent.com/spesmilo/electrum/refs/heads/master/electrum/chains/mainnet/servers.json"
+ONION_FALLBACK_SERVER="${ELECTRUM_ONION_FALLBACK_SERVER:-explorerzydxu5ecjrkwceayqybizmpjjznk5izmitf2modhcusuqlid.onion:110:t}"
 DEFAULT_SERVER="${ELECTRUM_DEFAULT_SERVER:-electrum.blockstream.info:50002:s}"
 
-SERVER_CANDIDATES=(
-    "bejqtnc64qttdempkczylydg7l3ordwugbdar7yqbndck53ukx7wnwad.onion:50002:s"
-    "egyh5mutxwcvwhlvjubf6wytwoq5xxvfb2522ocx77puc6ihmffrh6id.onion:50002:s"
-    "kittycp2gatrqhlwpmbczk5rblw62enrpo2rzwtkfrrr27hq435d4vid.onion:50002:s"
-    "nuzzg3pku3xbctgamzq3pf7ztakkiidnmmier64arqwh3ajdddovatad.onion:50002:s"
-    "qly7g5n5t3f3h23xvbp44vs6vpmayurno4basuu5rcvrupli7y2jmgid.onion:50002:s"
-    "rzspa374ob3hlyjptkdgz6a62wim2mpanuw6m3shlwn2cxg2smy3p7yd.onion:50004:s"
-    "ty6cgwaf2pbc244gijtmpfvte3wwfp32wgz57eltjkgtsel2q7jufjyd.onion:50002:s"
-    "udfpzbte2hommnvag5f3qlouqkhvp3xybhlus2yvfeqdwlhjroe4bbyd.onion:60002:s"
-    "venmrle3xuwkgkd42wg7f735l6cghst3sdfa3w3ryib2rochfhld6lid.onion:50002:s"
-    "wsw6tua3xl24gsmi264zaep6seppjyrkyucpsmuxnjzyt3f3j6swshad.onion:50002:s"
-)
+SERVER_CANDIDATES=()
 
 tty_is_tty=0
 electrum_child_pid=""
@@ -58,7 +48,7 @@ vault_session_pid=""
 readonly MAX_INPUT_LENGTH=512
 readonly MAX_BTC_SATS=2100000000000000
 readonly MAX_FEE_RATE_MILLISATVB=1000000000
-readonly PROBE_ATTEMPTS=20
+readonly PROBE_ATTEMPTS=10
 
 ipv4_address_valid() {
     local address="${1:-}" octet
@@ -211,27 +201,27 @@ if [[ -t 0 && -t 1 ]]; then
 fi
 
 read_line() {
-    local __var="$1" prompt="$2" value=""
+    local __var="$1" prompt="$2" input=""
     tty_write "${prompt}"
     if tty_available; then
-        if ! IFS= read -r value < /dev/tty; then
+        if ! IFS= read -r input < /dev/tty; then
             return 1
         fi
     else
-        if ! IFS= read -r value; then
+        if ! IFS= read -r input; then
             return 1
         fi
     fi
-    value="${value//$'\r'/}"
-    if (( ${#value} > MAX_INPUT_LENGTH )); then
+    input="${input//$'\r'/}"
+    if (( ${#input} > MAX_INPUT_LENGTH )); then
         tty_line '[error] input is too long.'
         return 1
     fi
-    if [[ "${value}" == *[[:cntrl:]]* ]]; then
+    if [[ "${input}" == *[[:cntrl:]]* ]]; then
         tty_line '[error] control characters are not allowed.'
         return 1
     fi
-    printf -v "${__var}" '%s' "${value}"
+    printf -v "${__var}" '%s' "${input}"
 }
 
 read_secret() {
@@ -344,13 +334,12 @@ vault_tty_printf() {
 }
 
 vault_read_choice() {
-    local prompt="$1" value=""
+    local __var="$1" prompt="$2" value=""
 
-    if read_line value "${prompt}"; then
-        printf '%s' "${value}"
-    else
-        printf '%s' ''
+    if ! read_line value "${prompt}"; then
+        return 1
     fi
+    printf -v "${__var}" '%s' "${value}"
 }
 
 vault_pause_or_enter() {
@@ -390,7 +379,9 @@ choose_vault_mode() {
         tty_line "x. Exit"
         vault_tty_blank
 
-        choice="$(vault_read_choice "?: ")"
+        if ! vault_read_choice choice "?: "; then
+            return 1
+        fi
         case "${choice}" in
             1)
                 vault_mode="prompt"
@@ -668,7 +659,9 @@ prompt_new_vault() {
         tty_line "b. Back"
         vault_tty_blank
 
-        name="$(vault_read_choice "Vault name: ")"
+        if ! vault_read_choice name "Vault name: "; then
+            return 1
+        fi
         case "${name}" in
           b|B) return 2 ;;
         esac
@@ -723,7 +716,9 @@ choose_vault() {
         tty_line "x. Exit"
         vault_tty_blank
 
-        choice="$(vault_read_choice "?: ")"
+        if ! vault_read_choice choice "?: "; then
+            return 1
+        fi
         case "${choice}" in
           n|N)
             prompt_new_vault && return 0
@@ -794,7 +789,9 @@ open_or_create_vault() {
             clear_wallet_root
             tty_line "error: wrong password or damaged vault"
             vault_tty_blank
-            choice="$(vault_read_choice "Press Enter to try again, or x to exit: ")"
+            if ! vault_read_choice choice "Press Enter to try again, or x to exit: "; then
+                return 1
+            fi
             [[ "${choice}" =~ ^[xX]$ ]] && return 1
         done
     fi
@@ -932,6 +929,56 @@ start_daemon() {
     wait_for_connection
 }
 
+load_server_candidates() {
+    local json candidate
+
+    SERVER_CANDIDATES=()
+    json="$(curl -fsS -L --max-time 20 --max-filesize 1048576 \
+        --proto '=https' --tlsv1.3 --noproxy '' \
+        --proxy "socks5h://${HAPROXY_IP}:9095" \
+        "${SERVER_SOURCE}" 2>/dev/null || true)"
+    if [[ -z "${json}" ]]; then
+        tty_line "[warn] could not fetch the official Electrum server list through Tor."
+        return 1
+    fi
+
+    while IFS= read -r candidate; do
+        if [[ -n "${candidate}" ]]; then
+            SERVER_CANDIDATES+=("${candidate}")
+        fi
+    done < <(
+        printf '%s' "${json}" \
+            | awk -v RS='}' '
+                /"[a-z2-7]+[.]onion"[[:space:]]*:/ &&
+                /"s"[[:space:]]*:[[:space:]]*"/ {
+                    if (!match($0, /[a-z2-7]+[.]onion/)) {
+                        next
+                    }
+                    host = substr($0, RSTART, RLENGTH)
+
+                    port = $0
+                    sub(/.*"s"[[:space:]]*:[[:space:]]*"/, "", port)
+                    sub(/".*/, "", port)
+
+                    if (length(host) == 62 &&
+                        host ~ /^[a-z2-7]+[.]onion$/ &&
+                        port ~ /^[0-9]+$/ &&
+                        port >= 1 && port <= 65535) {
+                        endpoint = host ":" port ":s"
+                        if (!seen[endpoint]++) {
+                            print endpoint
+                        }
+                    }
+                }'
+    )
+
+    if (( ${#SERVER_CANDIDATES[@]} == 0 )); then
+        tty_line "[warn] the official list contains no usable TLS Onion entries."
+        return 1
+    fi
+    return 0
+}
+
 probe_server() {
     local server="$1" info connected height attempt
     probe_height=""
@@ -957,13 +1004,20 @@ probe_server() {
 
 discover_best_server() {
     local selected_server="" selected_height="" candidate index total scan=0
-    total="${#SERVER_CANDIDATES[@]}"
 
     screen_header "Electrum onion discovery" "Selecting the first working server through Tor."
-    tty_line "Proxy: HAProxy SOCKS5 with remote DNS at ${HAPROXY_IP}:9095"
-    tty_line "Candidates: ${total} official .onion servers"
+    tty_line "Proxy: HAProxy SOCKS5 with remote DNS through ${HAPROXY_IP}:9095"
     tty_line "Source: ${SERVER_SOURCE}"
-    tty_line "Fallback: ${DEFAULT_SERVER}"
+    tty_line "Loading the current official TLS Onion entries..."
+    if load_server_candidates; then
+        total="${#SERVER_CANDIDATES[@]}"
+        tty_line "TLS candidates: ${total}"
+    else
+        total=0
+        tty_line 'TLS candidates: unavailable'
+    fi
+    tty_line "Onion fallback: ${ONION_FALLBACK_SERVER}"
+    tty_line "Last fallback: ${DEFAULT_SERVER}"
     tty_line ''
 
     for index in "${!SERVER_CANDIDATES[@]}"; do
@@ -981,7 +1035,20 @@ discover_best_server() {
 
     if [[ -z "${selected_server}" ]]; then
         tty_line ''
-        tty_line 'No official Onion server responded; trying the default Electrum server through Tor.'
+        tty_line 'No TLS Onion server responded; trying the Blockstream Onion Electrum endpoint through Tor.'
+        printf '[onion fallback] %s ... ' "${ONION_FALLBACK_SERVER}"
+        if probe_server "${ONION_FALLBACK_SERVER}"; then
+            printf 'height=%s\n' "${probe_height}"
+            selected_server="${ONION_FALLBACK_SERVER}"
+            selected_height="${probe_height}"
+        else
+            printf '%s\n' 'unavailable'
+        fi
+    fi
+
+    if [[ -z "${selected_server}" ]]; then
+        tty_line ''
+        tty_line 'The Blockstream Onion endpoint is unavailable; trying the final Electrum fallback through Tor.'
         printf '[fallback] %s ... ' "${DEFAULT_SERVER}"
         if probe_server "${DEFAULT_SERVER}"; then
             printf 'height=%s\n' "${probe_height}"

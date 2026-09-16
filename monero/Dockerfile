@@ -38,10 +38,8 @@ RUN apk add --no-cache \
         unbound-dev \
         zeromq-dev \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
-    && printf '%s\n' UTC > /etc/timezone
-
-# Build against the fixed Alpine security revisions used by the runtime.
-RUN apk add --no-cache \
+    && printf '%s\n' UTC > /etc/timezone \
+    && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
         expat=2.8.4-r0 \
         expat-dev=2.8.4-r0 \
@@ -122,8 +120,8 @@ LABEL org.opencontainers.image.title="mgla Monero wallet" \
       org.opencontainers.image.version="${MONERO_VERSION}" \
       org.opencontainers.image.revision="${MONERO_COMMIT}"
 
-# Runtime packages match the shared-library set declared by Alpine's Monero
-# package, plus the launcher and curl used for onion daemon discovery.
+# Keep the final image limited to runtime packages, the pinned security
+# revisions, and the directories required by the non-root wallet process.
 RUN apk add --no-cache \
         bash \
         boost-chrono \
@@ -145,27 +143,22 @@ RUN apk add --no-cache \
         unbound-libs \
         zeromq \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
-    && printf '%s\n' UTC > /etc/timezone
-
-RUN command -v stty
-
-# Keep the explicitly requested fixed revisions in every final Alpine image.
-RUN apk add --no-cache \
+    && printf '%s\n' UTC > /etc/timezone \
+    && command -v stty \
+    && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
         expat=2.8.4-r0 \
         libexpat=2.8.4-r0 \
         openssl=3.5.8-r0 \
         libssl3=3.5.8-r0 \
         libcrypto3=3.5.8-r0 \
-        nghttp2-libs=1.70.0-r0
-
-RUN addgroup -g 1000 -S user \
+        nghttp2-libs=1.70.0-r0 \
+    && addgroup -g 1000 -S user \
     && adduser -S -D -H -u 1000 -G user -s /sbin/nologin user \
     && install -d -m 0755 -o root -g root /opt/app /opt/monero \
     && install -d -m 0700 -o 1000 -g 1000 /monero/wallets /monero/vault-store /tmp/home
 
-COPY --from=builder /src/monero/build/release/bin/monero-wallet-cli /opt/monero/monero-wallet-cli
-COPY --from=builder /src/vault/target/release/mgla-vault /opt/monero/mgla-vault
+COPY --from=builder /src/monero/build/release/bin/monero-wallet-cli /src/vault/target/release/mgla-vault /opt/monero/
 COPY wallet-launcher.sh /opt/app/monero
 
 RUN chmod 0755 /opt/app/monero /opt/monero/monero-wallet-cli /opt/monero/mgla-vault \

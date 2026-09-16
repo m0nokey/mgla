@@ -80,9 +80,7 @@ internal network, and the exits are the only services attached to the external
 bridge. Electrum's SOCKS connector performs remote DNS resolution for onion
 servers through the proxy.
 
-The launcher probes the pinned official Onion candidates in order and uses
-the first working server. If none responds, it tries the hardcoded
-`electrum.blockstream.info:50002:s` fallback through the same Tor proxy.
+At startup, the launcher fetches the current official Electrum [server list](https://raw.githubusercontent.com/spesmilo/electrum/refs/heads/master/electrum/chains/mainnet/servers.json) through the Tor proxy, extracts TLS (`s`) Onion entries, and probes them in source order. It selects the first working server. If no TLS Onion server responds, it tries Blockstream's official Onion Electrum endpoint `explorerzydxu5ecjrkwceayqybizmpjjznk5izmitf2modhcusuqlid.onion:110:t`. The matching `http://...onion/` address is the web Explorer on a different port, not the wallet protocol. If that Onion endpoint is unavailable, it tries `electrum.blockstream.info:50002:s` through the same Tor proxy.
 A reported height is displayed for diagnostics, not treated as proof that a
 remote server is honest.
 
