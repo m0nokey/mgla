@@ -127,7 +127,7 @@ int_network_container_app_ipv4=""
 guard_pid=""
 
 compose() {
-    docker compose -p "${project}" --profile "${compose_profile}" -f "${compose_file}" "$@"
+    docker compose -p "${project}" --profile "${compose_profile}" --profile vault -f "${compose_file}" "$@"
 }
 
 need() {
@@ -152,7 +152,7 @@ cleanup_stack() {
 
     if command -v docker >/dev/null 2>&1; then
         if [[ -n "${ext_network_container_subnet_cidr_ipv4:-}" ]]; then
-            docker compose -p "${project}" --profile "${compose_profile}" -f "${compose_file}" down \
+            docker compose -p "${project}" --profile "${compose_profile}" --profile vault -f "${compose_file}" down \
                 --volumes --remove-orphans >/dev/null 2>&1 || true
         fi
 
@@ -402,18 +402,18 @@ main() {
 
     if [[ "${image_mode}" == pull ]]; then
         info 'pulling published multi-architecture images'
-        compose pull
+        compose pull exit_a exit_b haproxy bitcoin
     else
         info 'building Alpine Tor, HAProxy, and Electrum images'
         if [[ "${NO_CACHE:-0}" == 1 ]]; then
-            compose --profile vault build --pull --no-cache
+            compose build --pull --no-cache
         else
-            compose --profile vault build --pull
+            compose build --pull
         fi
     fi
 
     info 'starting containers'
-    compose up -d --force-recreate --no-build
+    compose up -d --force-recreate --no-build exit_a exit_b haproxy bitcoin
     print_nyx_hint
 
     wait_for_exit

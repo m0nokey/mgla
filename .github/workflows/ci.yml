@@ -409,11 +409,11 @@ jobs:
           cache-db: true
 
       - name: Publish security summary
-        if: always()
+        if: success()
         run: python3 shared/ci/security-summary.py
 
       - name: Stage security reports
-        if: always()
+        if: success()
         run: |
           set -euo pipefail
           mkdir -p security-reports

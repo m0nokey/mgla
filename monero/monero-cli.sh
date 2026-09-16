@@ -102,7 +102,7 @@ compose_file="${module_dir}/../compose.yaml"
 guard_pid=""
 
 compose() {
-    docker compose -p "${project}" --profile "${compose_profile}" -f "${compose_file}" "$@"
+    docker compose -p "${project}" --profile "${compose_profile}" --profile vault -f "${compose_file}" "$@"
 }
 
 
@@ -110,7 +110,7 @@ cleanup_project() {
     set +e
     if command -v docker >/dev/null 2>&1; then
         if [[ -f "${compose_file}" ]]; then
-            docker compose -p "${project}" --profile "${compose_profile}" -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+            docker compose -p "${project}" --profile "${compose_profile}" --profile vault -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
         fi
         for name in "${cleanup_container_names[@]}"; do
             docker rm -f "${name}" >/dev/null 2>&1 || true
@@ -141,7 +141,7 @@ while kill -0 "${parent}" >/dev/null 2>&1; do
     sleep 1
 done
 if command -v docker >/dev/null 2>&1; then
-    docker compose -p "${project}" --profile "${profile}" -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    docker compose -p "${project}" --profile "${profile}" --profile vault -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
     for name in ${containers_str}; do
         docker rm -f "${name}" >/dev/null 2>&1 || true
     done
@@ -170,7 +170,7 @@ cleanup() {
     stop_guard
     if command -v docker >/dev/null 2>&1; then
         if [[ -f "${compose_file}" ]]; then
-            docker compose -p "${project}" --profile "${compose_profile}" -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+            docker compose -p "${project}" --profile "${compose_profile}" --profile vault -f "${compose_file}" down --volumes --remove-orphans >/dev/null 2>&1 || true
         fi
         for name in "${cleanup_container_names[@]}"; do
             docker rm -f "${name}" >/dev/null 2>&1 || true
@@ -268,7 +268,7 @@ start_guard
 install -d -m 700 "${wallet_store_host_dir}"
 if [[ "${image_mode}" == "pull" ]]; then
     echo "[info] pulling published multi-architecture images"
-    compose pull
+    compose pull exit_a exit_b haproxy monero
 else
     echo "[info] building Alpine images and source-built Monero image"
     if [[ "${NO_CACHE:-0}" == "1" ]]; then
@@ -281,7 +281,7 @@ else
 fi
 
 echo "[info] starting containers"
-compose up -d --force-recreate --no-build
+compose up -d --force-recreate --no-build exit_a exit_b haproxy monero
 
 wipe_host
 print_message_about_nyx
