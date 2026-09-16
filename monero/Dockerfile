@@ -17,6 +17,7 @@ ARG MONERO_COMMIT=4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5
 RUN apk add --no-cache \
         boost-dev \
         build-base \
+        bash \
         ca-certificates \
         cargo \
         ccache \
