@@ -152,12 +152,12 @@ stop_daemon() {
 
 stop_wallet_child() {
     local pid="${electrum_child_pid:-}"
-    local i
+    local attempts
 
     [[ -n "${pid}" ]] || return 0
 
     kill -INT "${pid}" 2>/dev/null || true
-    for i in 1 2 3 4 5; do
+    for ((attempts = 5; attempts > 0; attempts--)); do
         if ! kill -0 "${pid}" 2>/dev/null; then
             electrum_child_pid=""
             return 0
@@ -166,7 +166,7 @@ stop_wallet_child() {
     done
 
     kill -TERM "${pid}" 2>/dev/null || true
-    for i in 1 2 3 4 5; do
+    for ((attempts = 5; attempts > 0; attempts--)); do
         if ! kill -0 "${pid}" 2>/dev/null; then
             electrum_child_pid=""
             return 0
