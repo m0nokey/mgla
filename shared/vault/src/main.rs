@@ -344,6 +344,32 @@ fn crypt_sector(
     Ok(result)
 }
 
+fn parse_inner_header(plaintext: &[u8], layout: &VaultLayout) -> VaultResult<u64> {
+    if plaintext.len() < INNER_HEADER_SIZE {
+        return Err(invalid_data("vault inner header is truncated").into());
+    }
+    if plaintext[..INNER_MAGIC.len()] != INNER_MAGIC[..]
+        || u32::from_le_bytes(plaintext[16..20].try_into()?) != layout.format.version()
+        || u32::from_le_bytes(plaintext[20..24].try_into()?) != SECTOR_SIZE as u32
+    {
+        return Err(invalid_data("vault format is not recognized").into());
+    }
+    let size = u64::from_le_bytes(plaintext[24..32].try_into()?);
+    let maximum = layout.data_size - INNER_HEADER_SIZE as u64;
+    if size > maximum {
+        return Err(invalid_data("vault archive length is invalid").into());
+    }
+    Ok(size)
+}
+
+fn verify_encryption_key(file: &mut File, layout: &VaultLayout, keys: &Keys) -> VaultResult<()> {
+    file.seek(SeekFrom::Start(layout.data_offset))?;
+    let mut ciphertext = Zeroizing::new([0u8; SECTOR_SIZE]);
+    file.read_exact(&mut ciphertext[..])?;
+    let plaintext = Zeroizing::new(crypt_sector(&keys.xts, 0, &ciphertext, Mode::Decrypt)?);
+    parse_inner_header(&plaintext, layout)?;
+    Ok(())
+}
 struct LimitedWriter<W> {
     inner: W,
     limit: u64,
@@ -637,6 +663,7 @@ fn pack_image(
         }
         let mut existing_file = File::open(image)?;
         verify_image(&mut existing_file, &existing, keys)?;
+        verify_encryption_key(&mut existing_file, &existing, keys)?;
     }
 
     let maximum_archive_size = data_size
