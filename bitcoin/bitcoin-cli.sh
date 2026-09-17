@@ -349,7 +349,7 @@ run_electrum_checks() {
     if [[ "${CI:-0}" == 1 ]]; then
         info 'CI mode: skipping live Electrum onion discovery'
     else
-        info 'live Electrum onion discovery runs once before vault opening'
+        info 'live Electrum onion discovery runs once after vault opening, before the selected wallet/network operation'
     fi
     printf '%s\n' '[ok] Electrum CLI, input validation, and Tor proxy checks passed'
 }

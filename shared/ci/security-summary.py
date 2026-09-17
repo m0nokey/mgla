@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a compact Trivy vulnerability table to the GitHub Actions summary."""
+"""Write compact Trivy and Grype vulnerability tables to the Actions summary."""
 
 from collections import Counter
 import json
@@ -7,8 +7,9 @@ import os
 from pathlib import Path
 
 
-SEVERITIES = ("UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL")
+SEVERITIES = ("NEGLIGIBLE", "UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL")
 IMAGE_ORDER = ("exit", "haproxy", "monero", "bitcoin")
+SCANNER_ORDER = ("trivy", "grype")
 
 
 def classify(value):
@@ -66,42 +67,54 @@ def load_counts(path):
 
 
 def main():
-    reports = sorted(Path("trivy-reports").glob("trivy-*.sarif"))
-    if not reports:
-        raise SystemExit("No SARIF reports found")
-
     rows = []
-    for path in reports:
-        report_name = path.stem.removeprefix("trivy-")
-        image, architecture = report_name.rsplit("-", 1)
-        counts = load_counts(path)
-        total = sum(counts.values())
-        rows.append((image, architecture, counts, total))
+    missing_scanners = []
+    for scanner in SCANNER_ORDER:
+        reports = sorted(Path(f"{scanner}-reports").glob(f"{scanner}-*.sarif"))
+        if not reports:
+            missing_scanners.append(scanner)
+        for path in reports:
+            report_name = path.stem.removeprefix(f"{scanner}-")
+            image, architecture = report_name.rsplit("-", 1)
+            counts = load_counts(path)
+            total = sum(counts.values())
+            rows.append((scanner, image, architecture, counts, total))
 
     def sort_key(row):
-        image, architecture, _, _ = row
+        scanner, image, architecture, _, _ = row
+        scanner_index = SCANNER_ORDER.index(scanner)
         image_index = IMAGE_ORDER.index(image) if image in IMAGE_ORDER else len(IMAGE_ORDER)
-        return image_index, architecture
+        return scanner_index, image_index, architecture
 
     rows.sort(key=sort_key)
 
     lines = [
         "## Container security summary",
         "",
-        "| Image | Architecture | UNKNOWN | LOW | MEDIUM | HIGH | CRITICAL | Total |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Scanner | Image | Architecture | NEGLIGIBLE | UNKNOWN | LOW | MEDIUM | HIGH | CRITICAL | Total |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    for image, architecture, counts, total in rows:
+    for scanner, image, architecture, counts, total in rows:
         values = [str(counts.get(severity, 0)) for severity in SEVERITIES]
-        line = f"| `{image}` | `{architecture}` | "
+        line = f"| `{scanner}` | `{image}` | `{architecture}` | "
         lines.append(line + " | ".join(values) + f" | {total} |")
+
+    if missing_scanners:
+        lines.extend(
+            (
+                "",
+                "WARNING: no SARIF report was generated for: "
+                + ", ".join(f"`{scanner}`" for scanner in missing_scanners)
+                + ". The scan outcome is enforced separately.",
+            )
+        )
 
     lines.extend(
         (
             "",
-            "Trivy reports OS and library vulnerabilities. "
-            "Grype independently checks the same images. "
-            "The blocking policy is fixable MEDIUM, HIGH, and CRITICAL findings.",
+            "Both scanners report all available findings, including vulnerabilities "
+            "without a known fix. Separate blocker scans fail on fixable MEDIUM, "
+            "HIGH, and CRITICAL findings.",
             "",
         )
     )

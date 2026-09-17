@@ -25,6 +25,7 @@ DEFAULT_SERVER="${ELECTRUM_DEFAULT_SERVER:-electrum.blockstream.info:50002:s}"
 SERVER_CANDIDATES=()
 discovered_server=""
 
+electrum_ready=0
 tty_is_tty=0
 electrum_child_pid=""
 probe_height=""
@@ -149,10 +150,39 @@ stop_daemon() {
     electrum_probe stop >/dev/null 2>&1 || true
 }
 
+stop_wallet_child() {
+    local pid="${electrum_child_pid:-}"
+    local i
+
+    [[ -n "${pid}" ]] || return 0
+
+    kill -INT "${pid}" 2>/dev/null || true
+    for i in 1 2 3 4 5; do
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            electrum_child_pid=""
+            return 0
+        fi
+        sleep 0.1
+    done
+
+    kill -TERM "${pid}" 2>/dev/null || true
+    for i in 1 2 3 4 5; do
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            electrum_child_pid=""
+            return 0
+        fi
+        sleep 0.1
+    done
+
+    kill -KILL "${pid}" 2>/dev/null || true
+    electrum_child_pid=""
+}
+
 on_signal() {
-    if [[ -n "${electrum_child_pid}" ]]; then
-        kill -INT "${electrum_child_pid}" >/dev/null 2>&1 || true
-    fi
+    stop_wallet_child
+    clear_screen
+    restore_tty
+    printf '\n%s\n' 'Interrupted by Ctrl+C. Exiting...'
     exit 130
 }
 
@@ -164,7 +194,7 @@ cleanup() {
     fi
     cleanup_done=1
 
-    restore_tty
+    stop_wallet_child
     stop_daemon
     if declare -F save_vault >/dev/null 2>&1 && [[ "${vault_loaded:-0}" -eq 1 ]]; then
         save_vault || true
@@ -176,6 +206,7 @@ cleanup() {
         clear_wallet_root
     fi
 
+    restore_tty
     return "${exit_code}"
 }
 
@@ -602,6 +633,24 @@ discover_best_server() {
     return 0
 }
 
+ensure_electrum_ready() {
+    # Keep interactive discovery lazy, matching Monero: vault first, then the
+    # selected wallet/network operation, then discovery immediately before it.
+    if [[ "${electrum_ready}" -eq 1 ]]; then
+        return 0
+    fi
+
+    if [[ -n "${discovered_server}" ]]; then
+        if ! start_daemon; then
+            printf '[error] selected server did not start: %s\n' "${discovered_server}" >&2
+            return 1
+        fi
+    elif ! discover_best_server; then
+        return 1
+    fi
+    electrum_ready=1
+}
+
 wallet_name_valid() {
     local name="$1"
     [[ "${name}" != "." && "${name}" != ".." ]] || return 1
@@ -830,7 +879,7 @@ open_created_wallet() {
 
 
 create_wallet() {
-    local wallet seed answer rc
+    local wallet seed answer rc wallet_changed=0
     if wallet_path_prompt wallet; then
         :
     else
@@ -845,6 +894,10 @@ create_wallet() {
         return 0
     fi
 
+    if ! ensure_electrum_ready; then
+        pause_screen
+        return 0
+    fi
     seed="$(electrum_cli make_seed 2>/dev/null || true)"
     if [[ -z "${seed}" ]]; then
         screen_header 'Create wallet' 'Seed generation failed.'
@@ -868,7 +921,9 @@ create_wallet() {
     unset seed
 
     screen_header 'Create wallet' 'Electrum will now ask for the seed and wallet password.'
+    vault_mark_dirty
     if electrum_tty -w "${wallet}" restore :; then
+        wallet_changed=1
         if open_created_wallet "${wallet}"; then
             wallet_menu "${wallet}"
         else
@@ -881,10 +936,15 @@ create_wallet() {
         screen_header 'Create wallet' 'Wallet creation failed.'
         pause_screen
     fi
+    if [[ "${wallet_changed}" -eq 1 ]]; then
+        if ! save_vault; then
+            pause_screen
+        fi
+    fi
 }
 
 restore_wallet() {
-    local wallet rc
+    local wallet rc wallet_changed=0
     if wallet_path_prompt wallet; then
         :
     else
@@ -898,10 +958,16 @@ restore_wallet() {
         pause_screen
         return 0
     fi
+    if ! ensure_electrum_ready; then
+        pause_screen
+        return 0
+    fi
     screen_header 'Restore wallet' 'Enter the existing seed in Electrum.'
     tty_line 'The seed and password are entered directly into Electrum.'
     tty_line ''
+    vault_mark_dirty
     if electrum_tty -w "${wallet}" restore :; then
+        wallet_changed=1
         if open_created_wallet "${wallet}"; then
             wallet_menu "${wallet}"
         else
@@ -913,6 +979,11 @@ restore_wallet() {
         rm -f -- "${wallet}"
         screen_header 'Restore wallet' 'Wallet restoration failed.'
         pause_screen
+    fi
+    if [[ "${wallet_changed}" -eq 1 ]]; then
+        if ! save_vault; then
+            pause_screen
+        fi
     fi
 }
 
@@ -951,8 +1022,13 @@ show_wallets() {
         fi
         if menu_index_valid "${choice}" "${count}"; then
             index=$((10#${choice} - 1))
-            if unlock_wallet "${wallets[${index}]}"; then
+            if ! ensure_electrum_ready; then
+                pause_screen
+            elif unlock_wallet "${wallets[${index}]}"; then
                 wallet_menu "${wallets[${index}]}"
+                if ! save_vault; then
+                    pause_screen
+                fi
             fi
         fi
     done
@@ -1118,7 +1194,11 @@ render_fee_estimates() {
 }
 
 show_fee_estimates() {
-    show_screen render_fee_estimates
+    if ensure_electrum_ready; then
+        show_screen render_fee_estimates
+    else
+        pause_screen
+    fi
 }
 
 choose_fee_rate() {
@@ -1326,7 +1406,11 @@ render_network_info() {
 }
 
 show_network_info() {
-    show_screen render_network_info
+    if ensure_electrum_ready; then
+        show_screen render_network_info
+    else
+        pause_screen
+    fi
 }
 
 render_servers() {
@@ -1340,11 +1424,19 @@ render_servers() {
 }
 
 show_servers() {
-    show_screen render_servers
+    if ensure_electrum_ready; then
+        show_screen render_servers
+    else
+        pause_screen
+    fi
 }
 
 switch_server() {
     local choice server rc
+    if ! ensure_electrum_ready; then
+        pause_screen
+        return 0
+    fi
     screen_header 'Switch Electrum server' 'Only TLS .onion servers from the official list are accepted.'
     for choice in "${!SERVER_CANDIDATES[@]}"; do
         printf '%2d. %s\n' "$((choice + 1))" "${SERVER_CANDIDATES[${choice}]}"
@@ -1362,9 +1454,13 @@ switch_server() {
         return 0
     fi
     server="${SERVER_CANDIDATES[$((10#${choice} - 1))]}"
+    electrum_ready=0
+    discovered_server=""
     stop_daemon
     set_config server "${server}"
     if start_daemon; then
+        discovered_server="${server}"
+        electrum_ready=1
         screen_header 'Switch Electrum server' 'Server changed.'
         tty_line "Server: ${server}"
     else
@@ -1388,7 +1484,11 @@ render_diagnostics() {
 }
 
 show_diagnostics() {
-    show_screen render_diagnostics
+    if ensure_electrum_ready; then
+        show_screen render_diagnostics
+    else
+        pause_screen
+    fi
 }
 
 if [[ "${MGLA_VALIDATE_ONLY:-0}" == 1 ]]; then
@@ -1410,12 +1510,6 @@ if [[ "${MGLA_CI:-0}" != 1 ]]; then
     if [[ "${vault_rc}" -ne 0 ]]; then
         exit 1
     fi
-    if ! configure_electrum; then
-        exit 1
-    fi
-    if ! discover_best_server; then
-        exit 1
-    fi
     stop_daemon
     if ! clear_wallet_root; then
         printf '%s\n' '[error] could not clear the temporary discovery workspace' >&2
@@ -1430,18 +1524,11 @@ fi
 if ! configure_electrum; then
     exit 1
 fi
-if [[ -n "${discovered_server}" ]]; then
-    if ! start_daemon; then
-        printf '[error] selected server did not start: %s\n' "${discovered_server}" >&2
-        exit 1
-    fi
-else
-    if ! discover_best_server; then
-        exit 1
-    fi
-fi
 
 if [[ "${MGLA_CI:-0}" == 1 ]]; then
+    if ! ensure_electrum_ready; then
+        exit 1
+    fi
     info="$(electrum_cli getinfo 2>/dev/null || true)"
     if [[ "$(printf '%s\n' "${info}" | json_value connected)" != true ]]; then
         printf '%s\n' '[error] Electrum is not connected after onion discovery' >&2

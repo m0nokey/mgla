@@ -360,6 +360,19 @@ jobs:
           image: ghcr.io/m0nokey/mgla-exit:${{ github.sha }}-${{ matrix.architecture }}
           output-format: sarif
           output-file: grype-reports/grype-exit-${{ matrix.architecture }}.sarif
+          fail-build: false
+          severity-cutoff: medium
+          only-fixed: false
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: true
+
+      - name: Check exit image for fixable vulnerabilities with Grype
+        id: grype_exit_gate
+        continue-on-error: true
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ghcr.io/m0nokey/mgla-exit:${{ github.sha }}-${{ matrix.architecture }}
+          output-format: table
           fail-build: true
           severity-cutoff: medium
           only-fixed: true
@@ -374,6 +387,19 @@ jobs:
           image: ghcr.io/m0nokey/mgla-haproxy:${{ github.sha }}-${{ matrix.architecture }}
           output-format: sarif
           output-file: grype-reports/grype-haproxy-${{ matrix.architecture }}.sarif
+          fail-build: false
+          severity-cutoff: medium
+          only-fixed: false
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: true
+
+      - name: Check HAProxy image for fixable vulnerabilities with Grype
+        id: grype_haproxy_gate
+        continue-on-error: true
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ghcr.io/m0nokey/mgla-haproxy:${{ github.sha }}-${{ matrix.architecture }}
+          output-format: table
           fail-build: true
           severity-cutoff: medium
           only-fixed: true
@@ -388,6 +414,19 @@ jobs:
           image: ghcr.io/m0nokey/mgla-monero:${{ github.sha }}-${{ matrix.architecture }}
           output-format: sarif
           output-file: grype-reports/grype-monero-${{ matrix.architecture }}.sarif
+          fail-build: false
+          severity-cutoff: medium
+          only-fixed: false
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: true
+
+      - name: Check Monero image for fixable vulnerabilities with Grype
+        id: grype_monero_gate
+        continue-on-error: true
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ghcr.io/m0nokey/mgla-monero:${{ github.sha }}-${{ matrix.architecture }}
+          output-format: table
           fail-build: true
           severity-cutoff: medium
           only-fixed: true
@@ -402,6 +441,19 @@ jobs:
           image: ghcr.io/m0nokey/mgla-bitcoin:${{ github.sha }}-${{ matrix.architecture }}
           output-format: sarif
           output-file: grype-reports/grype-bitcoin-${{ matrix.architecture }}.sarif
+          fail-build: false
+          severity-cutoff: medium
+          only-fixed: false
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: true
+
+      - name: Check Bitcoin image for fixable vulnerabilities with Grype
+        id: grype_bitcoin_gate
+        continue-on-error: true
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ghcr.io/m0nokey/mgla-bitcoin:${{ github.sha }}-${{ matrix.architecture }}
+          output-format: table
           fail-build: true
           severity-cutoff: medium
           only-fixed: true
@@ -429,6 +481,8 @@ jobs:
           retention-days: 30
 
       - name: Scan exit image for release blockers
+        id: trivy_exit_gate
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
@@ -442,6 +496,8 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
 
       - name: Scan HAProxy image for release blockers
+        id: trivy_haproxy_gate
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
@@ -455,6 +511,8 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
 
       - name: Scan Monero image for release blockers
+        id: trivy_monero_gate
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
@@ -468,6 +526,8 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
 
       - name: Scan Bitcoin image for release blockers
+        id: trivy_bitcoin_gate
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
@@ -488,20 +548,36 @@ jobs:
           TRIVY_HAPROXY_REPORT: ${{ steps.trivy_haproxy_report.outcome }}
           TRIVY_MONERO_REPORT: ${{ steps.trivy_monero_report.outcome }}
           TRIVY_BITCOIN_REPORT: ${{ steps.trivy_bitcoin_report.outcome }}
-          GRYPE_EXIT: ${{ steps.grype_exit.outcome }}
-          GRYPE_HAPROXY: ${{ steps.grype_haproxy.outcome }}
-          GRYPE_MONERO: ${{ steps.grype_monero.outcome }}
-          GRYPE_BITCOIN: ${{ steps.grype_bitcoin.outcome }}
+          TRIVY_EXIT_GATE: ${{ steps.trivy_exit_gate.outcome }}
+          TRIVY_HAPROXY_GATE: ${{ steps.trivy_haproxy_gate.outcome }}
+          TRIVY_MONERO_GATE: ${{ steps.trivy_monero_gate.outcome }}
+          TRIVY_BITCOIN_GATE: ${{ steps.trivy_bitcoin_gate.outcome }}
+          GRYPE_EXIT_REPORT: ${{ steps.grype_exit.outcome }}
+          GRYPE_HAPROXY_REPORT: ${{ steps.grype_haproxy.outcome }}
+          GRYPE_MONERO_REPORT: ${{ steps.grype_monero.outcome }}
+          GRYPE_BITCOIN_REPORT: ${{ steps.grype_bitcoin.outcome }}
+          GRYPE_EXIT_GATE: ${{ steps.grype_exit_gate.outcome }}
+          GRYPE_HAPROXY_GATE: ${{ steps.grype_haproxy_gate.outcome }}
+          GRYPE_MONERO_GATE: ${{ steps.grype_monero_gate.outcome }}
+          GRYPE_BITCOIN_GATE: ${{ steps.grype_bitcoin_gate.outcome }}
         run: |
           set -euo pipefail
           if [[ "${TRIVY_EXIT_REPORT}" == failure ||
             "${TRIVY_HAPROXY_REPORT}" == failure ||
             "${TRIVY_MONERO_REPORT}" == failure ||
             "${TRIVY_BITCOIN_REPORT}" == failure ||
-            "${GRYPE_EXIT}" == failure ||
-            "${GRYPE_HAPROXY}" == failure ||
-            "${GRYPE_MONERO}" == failure ||
-            "${GRYPE_BITCOIN}" == failure ]]; then
+            "${TRIVY_EXIT_GATE}" == failure ||
+            "${TRIVY_HAPROXY_GATE}" == failure ||
+            "${TRIVY_MONERO_GATE}" == failure ||
+            "${TRIVY_BITCOIN_GATE}" == failure ||
+            "${GRYPE_EXIT_REPORT}" == failure ||
+            "${GRYPE_HAPROXY_REPORT}" == failure ||
+            "${GRYPE_MONERO_REPORT}" == failure ||
+            "${GRYPE_BITCOIN_REPORT}" == failure ||
+            "${GRYPE_EXIT_GATE}" == failure ||
+            "${GRYPE_HAPROXY_GATE}" == failure ||
+            "${GRYPE_MONERO_GATE}" == failure ||
+            "${GRYPE_BITCOIN_GATE}" == failure ]]; then
             echo "image security scanner failed or found a fixable medium, high, or critical vulnerability" >&2
             exit 1
           fi
@@ -767,13 +843,26 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
 
       - name: Check latest image with Grype
-        id: grype
+        id: grype_report
         continue-on-error: true
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: ghcr.io/m0nokey/mgla-${{ matrix.image }}:latest
           output-format: sarif
           output-file: grype-reports/grype-${{ matrix.image }}-${{ matrix.architecture }}.sarif
+          fail-build: false
+          severity-cutoff: medium
+          only-fixed: false
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: true
+
+      - name: Check latest image for fixable vulnerabilities with Grype
+        id: grype_gate
+        continue-on-error: true
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ghcr.io/m0nokey/mgla-${{ matrix.image }}:latest
+          output-format: table
           fail-build: true
           severity-cutoff: medium
           only-fixed: true
@@ -804,12 +893,14 @@ jobs:
         env:
           TRIVY_REPORT_OUTCOME: ${{ steps.trivy_report.outcome }}
           TRIVY_BLOCKER_OUTCOME: ${{ steps.trivy_blocker.outcome }}
-          GRYPE_OUTCOME: ${{ steps.grype.outcome }}
+          GRYPE_REPORT_OUTCOME: ${{ steps.grype_report.outcome }}
+          GRYPE_GATE_OUTCOME: ${{ steps.grype_gate.outcome }}
         run: |
           set -euo pipefail
           if [[ "${TRIVY_REPORT_OUTCOME}" == failure ||
             "${TRIVY_BLOCKER_OUTCOME}" == failure ||
-            "${GRYPE_OUTCOME}" == failure ]]; then
+            "${GRYPE_REPORT_OUTCOME}" == failure ||
+            "${GRYPE_GATE_OUTCOME}" == failure ]]; then
             echo "latest image scan found a fixable medium, high, or critical vulnerability or scanner failure" >&2
             exit 1
           fi
