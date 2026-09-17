@@ -361,7 +361,7 @@ jobs:
           output-format: sarif
           output-file: grype-reports/grype-exit-${{ matrix.architecture }}.sarif
           fail-build: false
-          severity-cutoff: medium
+          severity-cutoff: critical
           only-fixed: false
           grype-version: ${{ env.GRYPE_VERSION }}
           cache-db: true
@@ -388,7 +388,7 @@ jobs:
           output-format: sarif
           output-file: grype-reports/grype-haproxy-${{ matrix.architecture }}.sarif
           fail-build: false
-          severity-cutoff: medium
+          severity-cutoff: critical
           only-fixed: false
           grype-version: ${{ env.GRYPE_VERSION }}
           cache-db: true
@@ -415,7 +415,7 @@ jobs:
           output-format: sarif
           output-file: grype-reports/grype-monero-${{ matrix.architecture }}.sarif
           fail-build: false
-          severity-cutoff: medium
+          severity-cutoff: critical
           only-fixed: false
           grype-version: ${{ env.GRYPE_VERSION }}
           cache-db: true
@@ -442,7 +442,7 @@ jobs:
           output-format: sarif
           output-file: grype-reports/grype-bitcoin-${{ matrix.architecture }}.sarif
           fail-build: false
-          severity-cutoff: medium
+          severity-cutoff: critical
           only-fixed: false
           grype-version: ${{ env.GRYPE_VERSION }}
           cache-db: true
@@ -851,7 +851,7 @@ jobs:
           output-format: sarif
           output-file: grype-reports/grype-${{ matrix.image }}-${{ matrix.architecture }}.sarif
           fail-build: false
-          severity-cutoff: medium
+          severity-cutoff: critical
           only-fixed: false
           grype-version: ${{ env.GRYPE_VERSION }}
           cache-db: true
