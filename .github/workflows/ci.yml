@@ -685,9 +685,25 @@ jobs:
           SOURCE_TAG: ${{ github.sha }}
         run: |
           set -euxo pipefail
+          push_image() {
+            local image_ref="$1"
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if docker push "${image_ref}"; then
+                return 0
+              fi
+              if (( attempt == 5 )); then
+                echo "docker push failed after ${attempt} attempts: ${image_ref}" >&2
+                return 1
+              fi
+              echo "docker push failed (attempt ${attempt}/5); retrying ${image_ref}" >&2
+              sleep $((attempt * 5))
+            done
+          }
+
           for architecture in amd64 arm64; do
             for image in exit haproxy monero bitcoin; do
-              docker push "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-${architecture}"
+              push_image "${IMAGE_REGISTRY}/mgla-${image}:${SOURCE_TAG}-${architecture}"
             done
           done
 
