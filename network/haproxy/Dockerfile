@@ -17,9 +17,6 @@ RUN apk add --no-cache \
     && printf '%s\n' UTC > /etc/timezone \
     && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
-        busybox=1.38.0-r6 \
-        busybox-binsh=1.38.0-r6 \
-        ssl_client=1.38.0-r6 \
         expat=2.8.4-r0 \
         libexpat=2.8.4-r0 \
         openssl=3.5.8-r0 \

@@ -119,9 +119,6 @@ RUN apk upgrade --no-cache \
     && printf '%s\n' UTC > /etc/timezone \
     && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
-        busybox=1.38.0-r6 \
-        busybox-binsh=1.38.0-r6 \
-        ssl_client=1.38.0-r6 \
         nghttp2-libs=1.70.0-r0 \
     && addgroup -g 1000 -S electrum \
     && adduser -S -D -H -u 1000 -G electrum -s /sbin/nologin electrum \

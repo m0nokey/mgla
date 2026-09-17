@@ -1391,15 +1391,15 @@ mod tests {
             (ARGON2ID_OPSLIMIT, ARGON2ID_MEMLIMIT)
         );
 
-        let first = derive_keys(&password, &layout).expect("derive first keys");
-        let second = derive_keys(&password, &layout).expect("derive same keys");
-        let changed = derive_keys(&other_password, &layout).expect("derive changed keys");
+        let first = derive_keys(password.as_ref(), &layout).expect("derive first keys");
+        let second = derive_keys(password.as_ref(), &layout).expect("derive same keys");
+        let changed = derive_keys(other_password.as_ref(), &layout).expect("derive changed keys");
         let mut changed_salt = layout.salt;
         changed_salt[0] = changed_salt[0].wrapping_add(1);
         let changed_salt_layout =
             VaultLayout::from_image(1024 * 1024, changed_salt).expect("changed salt layout");
         let changed_salt =
-            derive_keys(&password, &changed_salt_layout).expect("derive changed salt keys");
+            derive_keys(password.as_ref(), &changed_salt_layout).expect("derive changed salt keys");
         assert_eq!(first.xts.len(), 64);
         assert_eq!(first.mac.len(), 32);
         assert_eq!(first.xts.len() + first.mac.len(), 96);
