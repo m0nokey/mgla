@@ -148,11 +148,32 @@ choose_vault_mode() {
 }
 
 vault_session_request() {
-    local command="${1:-}"
+    local command="${1:-}" response
 
+    if [[ "${vault_mode}" != "session" ]]; then
+        vault_tty_print "error: vault session is not active"
+        return 1
+    fi
+    if [[ -z "${vault_session_socket}" || ! -S "${vault_session_socket}" ]]; then
+        vault_tty_print "error: vault session socket is unavailable"
+        return 1
+    fi
+    if response="$("${vault_binary}" session-request "${vault_session_socket}" "${command}" 2>&1)"; then
+        return 0
+    fi
+    if [[ -n "${response}" ]]; then
+        vault_tty_print "${response}"
+    else
+        vault_tty_print "error: vault session request failed"
+    fi
+    return 1
+}
+
+vault_session_available() {
     [[ "${vault_mode}" == "session" ]] || return 1
     [[ -n "${vault_session_socket}" && -S "${vault_session_socket}" ]] || return 1
-    "${vault_binary}" session-request "${vault_session_socket}" "${command}" >/dev/null 2>&1
+    [[ -n "${vault_session_pid}" ]] || return 1
+    kill -0 "${vault_session_pid}" 2>/dev/null
 }
 
 stop_vault_session() {
@@ -286,6 +307,12 @@ save_vault() {
     if [[ "${vault_mode}" == "session" ]]; then
         if vault_session_request pack; then
             saved=1
+        elif ! vault_session_available; then
+            stop_vault_session
+            vault_tty_print "[warn] protected vault session is unavailable; enter the password to save the wallet."
+            if vault_with_tty_password pack "${vault_file}" "${vault_root}"; then
+                saved=1
+            fi
         fi
     elif vault_with_tty_password pack "${vault_file}" "${vault_root}"; then
         saved=1
@@ -299,6 +326,41 @@ save_vault() {
 
     vault_tty_print "[error] failed to save encrypted wallet vault"
     return 1
+}
+
+vault_save_until_clean() {
+    local attempt choice
+
+    [[ "${vault_loaded}" -eq 1 && "${vault_dirty}" -eq 1 ]] || return 0
+
+    for attempt in 1 2 3; do
+        if save_vault; then
+            return 0
+        fi
+        if (( attempt < 3 )); then
+            vault_tty_print "[warn] encrypted wallet state is still unsaved; retrying (${attempt}/3)..."
+            sleep 1
+        fi
+    done
+
+    while [[ "${vault_loaded}" -eq 1 && "${vault_dirty}" -eq 1 ]]; do
+        vault_tty_print "[critical] wallet state was not saved. The temporary wallet remains intact."
+        vault_tty_print "The launcher will keep retrying; do not close the terminal or remove the container."
+        if [[ -r /dev/tty && -w /dev/tty ]]; then
+            if ! vault_read_choice choice "Press Enter to retry saving: "; then
+                sleep 1
+            elif [[ "${choice}" =~ ^[xX]$ ]]; then
+                vault_tty_print "[warn] exit is disabled until the encrypted wallet state is saved."
+            fi
+        else
+            sleep 5
+        fi
+        if save_vault; then
+            return 0
+        fi
+    done
+
+    return 0
 }
 
 vault_mark_dirty() {

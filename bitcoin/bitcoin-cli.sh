@@ -125,6 +125,7 @@ int_network_container_exit_b_ipv4=""
 int_network_container_haproxy_ipv4=""
 int_network_container_app_ipv4=""
 guard_pid=""
+wallet_exec_pid=""
 
 compose() {
     docker compose -p "${project}" --profile "${compose_profile}" --profile vault -f "${compose_file}" "$@"
@@ -210,7 +211,13 @@ cleanup() {
 
 on_signal() {
     printf '\n'
-    warn 'interrupted, cleaning up...'
+    warn 'interrupted, waiting for the wallet launcher to save its state...'
+    if [[ -n "${wallet_exec_pid:-}" ]]; then
+        trap '' INT TERM HUP QUIT
+        kill -INT "${wallet_exec_pid}" >/dev/null 2>&1 || true
+        wait "${wallet_exec_pid}" >/dev/null 2>&1 || true
+        wallet_exec_pid=""
+    fi
     exit 130
 }
 
@@ -374,6 +381,8 @@ export_runtime_config() {
 }
 
 main() {
+    local wallet_rc
+
     trap cleanup EXIT
     trap on_signal INT TERM HUP QUIT
 
@@ -432,7 +441,14 @@ main() {
     if [[ -t 0 && -t 1 ]]; then
         docker_exec_flags=(-it)
     fi
-    docker exec "${docker_exec_flags[@]}" "${bitcoin_container}" /opt/app/bitcoin
+    docker exec "${docker_exec_flags[@]}" "${bitcoin_container}" /opt/app/bitcoin &
+    wallet_exec_pid=$!
+    set +e
+    wait "${wallet_exec_pid}"
+    wallet_rc=$?
+    set -e
+    wallet_exec_pid=""
+    return "${wallet_rc}"
 }
 
 main "$@"

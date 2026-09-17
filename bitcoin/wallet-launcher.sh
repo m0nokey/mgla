@@ -146,8 +146,21 @@ electrum_tty() {
     "${ELECTRUM_BIN}" "$@"
 }
 
+electrum_daemon_running() {
+    timeout 1 "${ELECTRUM_BIN}" getinfo </dev/null >/dev/null 2>&1
+}
+
 stop_daemon() {
+    local attempts
+
     electrum_probe stop >/dev/null 2>&1 || true
+    for ((attempts = 50; attempts > 0; attempts--)); do
+        if ! electrum_daemon_running; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
 }
 
 stop_wallet_child() {
@@ -157,8 +170,9 @@ stop_wallet_child() {
     [[ -n "${pid}" ]] || return 0
 
     kill -INT "${pid}" 2>/dev/null || true
-    for ((attempts = 5; attempts > 0; attempts--)); do
+    for ((attempts = 50; attempts > 0; attempts--)); do
         if ! kill -0 "${pid}" 2>/dev/null; then
+            wait "${pid}" 2>/dev/null || true
             electrum_child_pid=""
             return 0
         fi
@@ -166,22 +180,22 @@ stop_wallet_child() {
     done
 
     kill -TERM "${pid}" 2>/dev/null || true
-    for ((attempts = 5; attempts > 0; attempts--)); do
+    for ((attempts = 50; attempts > 0; attempts--)); do
         if ! kill -0 "${pid}" 2>/dev/null; then
+            wait "${pid}" 2>/dev/null || true
             electrum_child_pid=""
             return 0
         fi
         sleep 0.1
     done
 
-    kill -KILL "${pid}" 2>/dev/null || true
+    tty_line '[warn] Electrum is still closing; waiting to preserve wallet state.'
+    wait "${pid}" 2>/dev/null || true
     electrum_child_pid=""
 }
 
 on_signal() {
     stop_wallet_child
-    clear_screen
-    restore_tty
     printf '\n%s\n' 'Interrupted by Ctrl+C. Exiting...'
     exit 130
 }
@@ -193,16 +207,23 @@ cleanup() {
         return "${exit_code}"
     fi
     cleanup_done=1
+    trap '' INT TERM HUP QUIT
 
     stop_wallet_child
-    stop_daemon
-    if declare -F save_vault >/dev/null 2>&1 && [[ "${vault_loaded:-0}" -eq 1 ]]; then
-        save_vault || true
+    if [[ "${vault_loaded:-0}" -eq 1 && "${vault_dirty:-0}" -eq 1 ]]; then
+        while ! stop_daemon; do
+            vault_tty_print '[warn] Electrum is still stopping; waiting before saving the wallet.'
+            sleep 1
+        done
+        vault_save_until_clean
+    else
+        stop_daemon || true
     fi
     if declare -F stop_vault_session >/dev/null 2>&1; then
         stop_vault_session || true
     fi
-    if declare -F clear_wallet_root >/dev/null 2>&1; then
+    if [[ "${vault_loaded:-0}" -eq 0 || "${vault_dirty:-0}" -eq 0 ]] &&
+        declare -F clear_wallet_root >/dev/null 2>&1; then
         clear_wallet_root
     fi
 
@@ -932,14 +953,15 @@ create_wallet() {
             pause_screen
         fi
     else
-        rm -f -- "${wallet}"
-        screen_header 'Create wallet' 'Wallet creation failed.'
+        # Keep any partial wallet file for recovery; never delete user state
+        # automatically after an interrupted or failed Electrum operation.
+        wallet_changed=1
+        screen_header 'Create wallet' 'Wallet creation failed; any partial wallet data was kept.'
+        tty_line 'If a wallet file was created, it remains encrypted in the vault for recovery.'
         pause_screen
     fi
     if [[ "${wallet_changed}" -eq 1 ]]; then
-        if ! save_vault; then
-            pause_screen
-        fi
+        vault_save_until_clean
     fi
 }
 
@@ -976,14 +998,15 @@ restore_wallet() {
             pause_screen
         fi
     else
-        rm -f -- "${wallet}"
-        screen_header 'Restore wallet' 'Wallet restoration failed.'
+        # Keep any partial wallet file for recovery; never delete user state
+        # automatically after an interrupted or failed Electrum operation.
+        wallet_changed=1
+        screen_header 'Restore wallet' 'Wallet restoration failed; any partial wallet data was kept.'
+        tty_line 'If a wallet file was created, it remains encrypted in the vault for recovery.'
         pause_screen
     fi
     if [[ "${wallet_changed}" -eq 1 ]]; then
-        if ! save_vault; then
-            pause_screen
-        fi
+        vault_save_until_clean
     fi
 }
 
@@ -1026,9 +1049,7 @@ show_wallets() {
                 pause_screen
             elif unlock_wallet "${wallets[${index}]}"; then
                 wallet_menu "${wallets[${index}]}"
-                if ! save_vault; then
-                    pause_screen
-                fi
+                vault_save_until_clean
             fi
         fi
     done

@@ -37,19 +37,23 @@ cleanup() {
         return "${exit_code}"
     fi
     cleanup_done=1
+    trap '' INT TERM HUP QUIT
 
     if declare -F stop_wallet_child >/dev/null 2>&1; then
         stop_wallet_child
     fi
     # Persist dirty wallet data before clearing the temporary wallet root,
-    # including signal and error exits.
-    if declare -F save_vault >/dev/null 2>&1 && [[ "${vault_loaded:-0}" -eq 1 ]]; then
-        save_vault || true
+    # including signal and error exits. Retry until the encrypted image is
+    # durable; clearing the temporary root after a failed save would lose it.
+    if declare -F vault_save_until_clean >/dev/null 2>&1 &&
+        [[ "${vault_loaded:-0}" -eq 1 && "${vault_dirty:-0}" -eq 1 ]]; then
+        vault_save_until_clean
     fi
     if declare -F stop_vault_session >/dev/null 2>&1; then
         stop_vault_session || true
     fi
-    if declare -F clear_wallet_root >/dev/null 2>&1; then
+    if [[ "${vault_loaded:-0}" -eq 0 || "${vault_dirty:-0}" -eq 0 ]] &&
+        declare -F clear_wallet_root >/dev/null 2>&1; then
         clear_wallet_root
     fi
 
@@ -64,24 +68,32 @@ stop_wallet_child() {
     [[ -n "${pid}" ]] || return 0
 
     kill -INT "${pid}" 2>/dev/null || true
-    for i in 1 2 3 4 5; do
-        kill -0 "${pid}" 2>/dev/null || return 0
+    for ((i = 50; i > 0; i--)); do
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            wait "${pid}" 2>/dev/null || true
+            wallet_pid=""
+            return 0
+        fi
         sleep 0.1
     done
 
     kill -TERM "${pid}" 2>/dev/null || true
-    for i in 1 2 3 4 5; do
-        kill -0 "${pid}" 2>/dev/null || return 0
+    for ((i = 50; i > 0; i--)); do
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            wait "${pid}" 2>/dev/null || true
+            wallet_pid=""
+            return 0
+        fi
         sleep 0.1
     done
 
-    kill -KILL "${pid}" 2>/dev/null || true
+    tty_print '[warn] Monero wallet is still closing; waiting to preserve wallet state.'
+    wait "${pid}" 2>/dev/null || true
+    wallet_pid=""
 }
 
 on_sigint() {
     stop_wallet_child
-    clear_screen
-    restore_tty
     echo
     echo "Interrupted by Ctrl+C. Exiting..."
     exit 130
@@ -89,7 +101,6 @@ on_sigint() {
 
 on_sigterm() {
     stop_wallet_child
-    restore_tty
     echo
     echo "Received SIGTERM. Exiting..."
     exit 143
@@ -703,15 +714,13 @@ create_wallet() {
 
     if [[ "${rc}" -eq 0 && -f "${wallet_file}" && -f "${wallet_keys}" ]]; then
         tty_print "wallet created: ${wallet_name}"
-        if ! save_vault; then
-            pause_or_enter
-            return 1
-        fi
+        vault_save_until_clean
         pause_or_enter
         return 0
     fi
 
     tty_print "error: monero-wallet-cli exited with code ${rc}"
+    vault_save_until_clean
     pause_or_enter
     return 1
 }
@@ -742,14 +751,12 @@ restore_wallet() {
             fi
             if [[ "${rc}" -eq 0 ]]; then
                 tty_print "wallet restored: ${wallet_name}"
-                if ! save_vault; then
-                    pause_or_enter
-                    return 1
-                fi
+                vault_save_until_clean
                 pause_or_enter
                 return 0
             fi
             tty_print "error: monero-wallet-cli exited with code ${rc}"
+            vault_save_until_clean
             pause_or_enter
             continue
         fi
@@ -774,14 +781,12 @@ restore_wallet() {
             fi
             if [[ "${rc}" -eq 0 ]]; then
                 tty_print "wallet restored: ${wallet_name}"
-                if ! save_vault; then
-                    pause_or_enter
-                    return 1
-                fi
+                vault_save_until_clean
                 pause_or_enter
                 return 0
             fi
             tty_print "error: monero-wallet-cli exited with code ${rc}"
+            vault_save_until_clean
             pause_or_enter
             continue
         fi
@@ -816,14 +821,12 @@ restore_wallet() {
             fi
             if [[ "${rc}" -eq 0 ]]; then
                 tty_print "wallet restored: ${wallet_name}"
-                if ! save_vault; then
-                    pause_or_enter
-                    return 1
-                fi
+                vault_save_until_clean
                 pause_or_enter
                 return 0
             fi
             tty_print "error: monero-wallet-cli exited with code ${rc}"
+            vault_save_until_clean
             pause_or_enter
             break
         done
@@ -917,15 +920,11 @@ while true; do
 
         if select_daemon; then
             if run_selected_wallet "$@"; then
-                if ! save_vault; then
-                    pause_or_enter
-                fi
+                vault_save_until_clean
             else
                 rc=$?
                 tty_print "wallet session ended with code ${rc}"
-                if ! save_vault; then
-                    pause_or_enter
-                fi
+                vault_save_until_clean
                 pause_or_enter
             fi
         else

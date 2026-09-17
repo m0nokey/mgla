@@ -100,6 +100,7 @@ int_network_container_app_ipv4=""
 
 compose_file="${module_dir}/../compose.yaml"
 guard_pid=""
+wallet_exec_pid=""
 
 compose() {
     docker compose -p "${project}" --profile "${compose_profile}" --profile vault -f "${compose_file}" "$@"
@@ -183,7 +184,13 @@ cleanup() {
 
 on_sigint() {
     echo
-    echo "[warn] interrupted, cleaning up..."
+    echo "[warn] interrupted, waiting for the wallet launcher to save its state..."
+    if [[ -n "${wallet_exec_pid:-}" ]]; then
+        trap '' INT TERM HUP QUIT
+        kill -INT "${wallet_exec_pid}" >/dev/null 2>&1 || true
+        wait "${wallet_exec_pid}" >/dev/null 2>&1 || true
+        wallet_exec_pid=""
+    fi
     cleanup
     exit 130
 }
@@ -397,4 +404,11 @@ docker_exec_flags=(-i)
 if [ -t 0 ]; then
     docker_exec_flags=(-it)
 fi
-docker exec "${docker_exec_flags[@]}" "${monero_container}" /opt/app/monero
+set +e
+docker exec "${docker_exec_flags[@]}" "${monero_container}" /opt/app/monero &
+wallet_exec_pid=$!
+wait "${wallet_exec_pid}"
+wallet_rc=$?
+set -e
+wallet_exec_pid=""
+exit "${wallet_rc}"
