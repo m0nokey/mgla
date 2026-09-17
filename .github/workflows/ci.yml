@@ -364,7 +364,10 @@ jobs:
           severity-cutoff: critical
           only-fixed: false
           grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
+          # The matrix invokes Grype concurrently; its immutable shared cache
+          # key causes harmless cache-reservation warnings in the UI. Grype
+          # still keeps and reuses its database locally on this runner.
+          cache-db: false
 
       - name: Check exit image for fixable vulnerabilities with Grype
         id: grype_exit_gate
@@ -377,7 +380,7 @@ jobs:
           severity-cutoff: medium
           only-fixed: true
           grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
+          cache-db: false
 
       - name: Generate HAProxy Grype security report
         id: grype_haproxy
@@ -391,7 +394,7 @@ jobs:
           severity-cutoff: critical
           only-fixed: false
           grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
+          cache-db: false
 
       - name: Check HAProxy image for fixable vulnerabilities with Grype
         id: grype_haproxy_gate
@@ -404,7 +407,7 @@ jobs:
           severity-cutoff: medium
           only-fixed: true
           grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
+          cache-db: false
 
       - name: Generate Monero Grype security report
         id: grype_monero
@@ -418,7 +421,7 @@ jobs:
           severity-cutoff: critical
           only-fixed: false
           grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
+          cache-db: false
 
       - name: Check Monero image for fixable vulnerabilities with Grype
         id: grype_monero_gate
@@ -431,7 +434,7 @@ jobs:
           severity-cutoff: medium
           only-fixed: true
           grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
+          cache-db: false
 
       - name: Generate Bitcoin Grype security report
         id: grype_bitcoin
@@ -445,7 +448,7 @@ jobs:
           severity-cutoff: critical
           only-fixed: false
           grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
+          cache-db: false
 
       - name: Check Bitcoin image for fixable vulnerabilities with Grype
         id: grype_bitcoin_gate
@@ -458,7 +461,7 @@ jobs:
           severity-cutoff: medium
           only-fixed: true
           grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
+          cache-db: false
 
       - name: Publish security summary
         if: success()
@@ -870,7 +873,7 @@ jobs:
           severity-cutoff: critical
           only-fixed: false
           grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
+          cache-db: false
 
       - name: Check latest image for fixable vulnerabilities with Grype
         id: grype_gate
@@ -883,7 +886,7 @@ jobs:
           severity-cutoff: medium
           only-fixed: true
           grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
+          cache-db: false
 
       - name: Publish rescan summary
         if: always()
