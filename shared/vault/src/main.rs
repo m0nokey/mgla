@@ -50,6 +50,7 @@ const GENERATED_PASSWORD_LETTERS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij
 const GENERATED_PASSWORD_ALPHABET: &[u8] =
     // codeql[rust/hard-coded-cryptographic-value]
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789<>*+!?_=#@%&";
+// codeql[rust/hard-coded-cryptographic-value]
 const GENERATED_PASSWORD_SPECIALS: &[u8] = b"<>*+!?_=#@%&";
 const HMAC_CONTEXT: &[u8] = b"MGLA-RAW-V3-HMAC";
 const INNER_MAGIC: &[u8] = b"MGLA-RAW-V3";
@@ -1324,12 +1325,17 @@ mod tests {
     use std::sync::Once;
     use tempfile::tempdir;
 
+    fn random_test_bytes<const N: usize>() -> [u8; N] {
+        let mut bytes = [0u8; N];
+        rand_bytes(&mut bytes).expect("random test bytes");
+        bytes
+    }
+
     fn test_keys() -> Keys {
-        let mut xts = [0x11; XTS_KEY_SIZE];
-        xts[XTS_KEY_SIZE / 2..].fill(0x22);
+        init_sodium();
         Keys {
-            xts,
-            mac: [0x33; MAC_KEY_SIZE],
+            xts: random_test_bytes(),
+            mac: random_test_bytes(),
         }
     }
 
@@ -1376,19 +1382,24 @@ mod tests {
     #[test]
     fn argon2id_derives_stable_separate_keys() {
         init_sodium();
-        let layout = VaultLayout::from_image(1024 * 1024, [0xA5; SALT_SIZE]).expect("fixed layout");
+        let layout = VaultLayout::current(1024 * 1024).expect("random layout");
+        let password = Zeroizing::new(random_test_bytes::<32>());
+        let mut other_password = Zeroizing::new(*password);
+        other_password[0] = other_password[0].wrapping_add(1);
         assert_eq!(
             layout.format.kdf_parameters(),
             (ARGON2ID_OPSLIMIT, ARGON2ID_MEMLIMIT)
         );
 
-        let first = derive_keys(b"test-password", &layout).expect("derive first keys");
-        let second = derive_keys(b"test-password", &layout).expect("derive same keys");
-        let changed = derive_keys(b"other-password", &layout).expect("derive changed keys");
+        let first = derive_keys(&password, &layout).expect("derive first keys");
+        let second = derive_keys(&password, &layout).expect("derive same keys");
+        let changed = derive_keys(&other_password, &layout).expect("derive changed keys");
+        let mut changed_salt = layout.salt;
+        changed_salt[0] = changed_salt[0].wrapping_add(1);
         let changed_salt_layout =
-            VaultLayout::from_image(1024 * 1024, [0x5A; SALT_SIZE]).expect("changed salt layout");
+            VaultLayout::from_image(1024 * 1024, changed_salt).expect("changed salt layout");
         let changed_salt =
-            derive_keys(b"test-password", &changed_salt_layout).expect("derive changed salt keys");
+            derive_keys(&password, &changed_salt_layout).expect("derive changed salt keys");
         assert_eq!(first.xts.len(), 64);
         assert_eq!(first.mac.len(), 32);
         assert_eq!(first.xts.len() + first.mac.len(), 96);
@@ -1400,14 +1411,14 @@ mod tests {
         assert_ne!(first.xts, changed_salt.xts);
         assert_ne!(first.mac, changed_salt.mac);
         assert_ne!(&first.xts[..MAC_KEY_SIZE], first.mac.as_slice());
-        assert_ne!(first.xts, [0u8; XTS_KEY_SIZE]);
-        assert_ne!(first.mac, [0u8; MAC_KEY_SIZE]);
+        assert!(first.xts.iter().any(|&byte| byte != 0));
+        assert!(first.mac.iter().any(|&byte| byte != 0));
     }
 
     #[test]
     fn aes_xts_uses_4k_sector_tweaks() {
         let keys = test_keys();
-        let plaintext = [0xA7; SECTOR_SIZE];
+        let plaintext = random_test_bytes::<SECTOR_SIZE>();
         let sector_zero =
             crypt_sector(&keys.xts, 0, &plaintext, Mode::Encrypt).expect("encrypt sector zero");
         let sector_one =
@@ -1429,11 +1440,11 @@ mod tests {
     #[test]
     fn hmac_sha256_covers_envelope_and_ciphertext() {
         let keys = test_keys();
-        let layout = VaultLayout::from_image(1024 * 1024, [0xA5; SALT_SIZE]).expect("fixed layout");
-        let mut envelope = [0x19u8; ENVELOPE_SECTOR_SIZE];
+        let layout = VaultLayout::current(1024 * 1024).expect("random layout");
+        let mut envelope = random_test_bytes::<ENVELOPE_SECTOR_SIZE>();
         envelope[ENVELOPE_SALT_OFFSET..ENVELOPE_SALT_OFFSET + SALT_SIZE]
             .copy_from_slice(&layout.salt);
-        let ciphertext = [0x2Bu8; SECTOR_SIZE];
+        let ciphertext = random_test_bytes::<SECTOR_SIZE>();
 
         let tag = |envelope: &[u8; ENVELOPE_SECTOR_SIZE], ciphertext: &[u8; SECTOR_SIZE]| {
             let mut mac = new_mac(&keys.mac, &layout).expect("initialize HMAC");
@@ -1445,11 +1456,11 @@ mod tests {
         assert_eq!(expected.len(), TAG_SIZE);
 
         let mut altered_envelope = envelope;
-        altered_envelope[0] ^= 0x01;
+        altered_envelope[0] = altered_envelope[0].wrapping_add(1);
         assert_ne!(expected, tag(&altered_envelope, &ciphertext));
 
         let mut altered_ciphertext = ciphertext;
-        altered_ciphertext[0] ^= 0x01;
+        altered_ciphertext[0] = altered_ciphertext[0].wrapping_add(1);
         assert_ne!(expected, tag(&envelope, &altered_ciphertext));
     }
 
@@ -1505,10 +1516,11 @@ mod tests {
         let repacked = inspect_image(&image).expect("inspect repacked image");
         assert_eq!(repacked.salt, persisted_salt);
         assert_eq!(repacked.data_size, layout.data_size);
-        let wrong_keys = Keys {
-            xts: [0x44; XTS_KEY_SIZE],
-            mac: [0x55; MAC_KEY_SIZE],
+        let mut wrong_keys = Keys {
+            xts: keys.xts,
+            mac: keys.mac,
         };
+        wrong_keys.xts[0] = wrong_keys.xts[0].wrapping_add(1);
         let original_image = fs::read(&image).expect("read original image");
         assert!(pack_image(
             &image,
@@ -1524,7 +1536,7 @@ mod tests {
             original_image
         );
         let mut bytes = fs::read(&image).expect("read image");
-        bytes[0] ^= 0x01;
+        bytes[0] = bytes[0].wrapping_add(1);
         fs::write(&image, &bytes).expect("tamper image");
         let tampered_destination = root.path().join("tampered");
         fs::create_dir(&tampered_destination).expect("tampered destination");
@@ -1535,7 +1547,7 @@ mod tests {
             .is_none());
 
         let mut tag_bytes = original_image.clone();
-        tag_bytes[ENVELOPE_TAG_OFFSET] ^= 0x01;
+        tag_bytes[ENVELOPE_TAG_OFFSET] = tag_bytes[ENVELOPE_TAG_OFFSET].wrapping_add(1);
         fs::write(&image, &tag_bytes).expect("tamper authentication tag");
         let tag_tampered_destination = root.path().join("tag-tampered");
         fs::create_dir(&tag_tampered_destination).expect("tag destination");
@@ -1547,7 +1559,8 @@ mod tests {
 
         fs::write(&image, &original_image).expect("restore original image");
         let mut ciphertext_bytes = original_image.clone();
-        ciphertext_bytes[ENVELOPE_SECTOR_SIZE] ^= 0x01;
+        ciphertext_bytes[ENVELOPE_SECTOR_SIZE] =
+            ciphertext_bytes[ENVELOPE_SECTOR_SIZE].wrapping_add(1);
         fs::write(&image, &ciphertext_bytes).expect("tamper ciphertext");
         let invalid_destination = root.path().join("not-created");
         let authentication_error = unpack_image(&image, &invalid_destination, &layout, &keys)
