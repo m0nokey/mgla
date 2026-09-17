@@ -367,7 +367,7 @@ fn verify_encryption_key(file: &mut File, layout: &VaultLayout, keys: &Keys) -> 
     let mut ciphertext = Zeroizing::new([0u8; SECTOR_SIZE]);
     file.read_exact(&mut ciphertext[..])?;
     let plaintext = Zeroizing::new(crypt_sector(&keys.xts, 0, &ciphertext, Mode::Decrypt)?);
-    parse_inner_header(&plaintext, layout)?;
+    parse_inner_header(&plaintext[..], layout)?;
     Ok(())
 }
 struct LimitedWriter<W> {
