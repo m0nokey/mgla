@@ -4,3 +4,4 @@
 !entrypoint.sh
 !network-check.py
 !wallet-launcher.sh
+!wallet-view.py
