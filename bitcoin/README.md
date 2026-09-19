@@ -10,6 +10,7 @@ blockchain.
 - `Dockerfile` — signed, hash-pinned Electrum build on Alpine 3.24.
 - `bitcoin-cli.sh` — lifecycle controller used by `run.sh` and CI.
 - `wallet-launcher.sh` — strict wallet UI and transaction validation.
+- wallet-view.py — read-only formatter for Electrum history, addresses, and UTXOs.
 - `entrypoint.sh` — direct container entrypoint.
 - `network-check.py` — runtime connectivity check used by integration tests.
 - `../network/exit` and `../network/haproxy` — shared Tor transport images.

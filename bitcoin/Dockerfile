@@ -132,6 +132,7 @@ COPY --chmod=0755 --from=shared vault/launcher.sh /opt/bitcoin/vault-launcher.sh
 COPY --chmod=0755 --from=shared vault/smoke-test.sh /opt/bitcoin/vault-smoke-test
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint
 COPY --chmod=0755 wallet-launcher.sh /opt/app/bitcoin
+COPY --chmod=0755 wallet-view.py /opt/app/wallet-view.py
 COPY --chmod=0755 network-check.py /opt/app/network-check.py
 
 RUN command -v curl \
@@ -141,6 +142,7 @@ RUN command -v curl \
     && /opt/venv/bin/electrum --offline --version \
     && /opt/venv/bin/python -c 'import aiohttp, aiorpcx, cffi, electrum_ecc, cryptography, qrcode; assert cryptography.__version__ == "50.0.1", cryptography.__version__; print("Electrum runtime imports: OK")' \
     && test -x /opt/app/network-check.py \
+    && test -x /opt/app/wallet-view.py \
     && chmod 0755 /opt/app/bitcoin /usr/local/bin/entrypoint /opt/bitcoin/mgla-vault \
     && ldd /opt/bitcoin/mgla-vault \
     && if ldd /opt/bitcoin/mgla-vault | grep -q 'not found'; then exit 1; fi \

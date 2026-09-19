@@ -130,7 +130,6 @@ RUN apk add --no-cache \
         openssl \
         readline \
         tzdata \
-        unbound-libs \
         zeromq \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
     && printf '%s\n' UTC > /etc/timezone \
@@ -143,6 +142,7 @@ RUN apk add --no-cache \
         libssl3=3.5.8-r0 \
         libcrypto3=3.5.8-r0 \
         nghttp2-libs=1.70.0-r0 \
+        unbound-libs=1.26.1-r0 \
     && addgroup -g 1000 -S user \
     && adduser -S -D -H -u 1000 -G user -s /sbin/nologin user \
     && install -d -m 0755 -o root -g root /opt/app /opt/monero \

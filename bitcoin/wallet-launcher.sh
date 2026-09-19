@@ -9,6 +9,7 @@ if [[ "$(id -u)" == 0 ]]; then
 fi
 
 ELECTRUM_BIN="/opt/venv/bin/electrum"
+WALLET_VIEW_BIN="/opt/app/wallet-view.py"
 ELECTRUMDIR="${ELECTRUMDIR:-/home/electrum/.electrum/bitcoin}"
 WALLETS_DIR="${ELECTRUMDIR}/wallets"
 
@@ -26,6 +27,7 @@ SERVER_CANDIDATES=()
 discovered_server=""
 
 electrum_ready=0
+electrum_version_value=""
 tty_is_tty=0
 electrum_child_pid=""
 probe_height=""
@@ -56,6 +58,11 @@ ipv4_address_valid() {
 
 if [[ ! -x "${ELECTRUM_BIN}" ]]; then
     printf '[error] Electrum binary is missing: %s\n' "${ELECTRUM_BIN}" >&2
+    exit 1
+fi
+
+if [[ ! -x "${WALLET_VIEW_BIN}" ]]; then
+    printf '[error] Bitcoin wallet view helper is missing: %s\n' "${WALLET_VIEW_BIN}" >&2
     exit 1
 fi
 
@@ -122,12 +129,29 @@ electrum_probe() {
 electrum_version() {
     local version
 
-    version="$(electrum_probe version 2>/dev/null || true)"
-    if [[ -n "${version}" ]]; then
-        printf '%s\n' "${version}" | head -n 1
+    if [[ -n "${electrum_version_value}" ]]; then
+        printf '%s\n' "${electrum_version_value}"
         return 0
     fi
-    "${ELECTRUM_BIN}" --offline --version 2>&1 | head -n 1 || true
+
+    version="$(electrum_probe version 2>/dev/null || true)"
+    version="$(printf '%s\n' "${version}" | head -n 1)"
+    if [[ -n "${version}" ]]; then
+        electrum_version_value="${version}"
+        printf '%s\n' "${electrum_version_value}"
+        return 0
+    fi
+
+    version="$("${ELECTRUM_BIN}" --offline version 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${version}" ]]; then
+        electrum_version_value="${version}"
+        printf '%s\n' "${electrum_version_value}"
+        return 0
+    fi
+
+    version="$(/opt/venv/bin/python -c 'from electrum.version import ELECTRUM_VERSION; print(ELECTRUM_VERSION)' 2>/dev/null | head -n 1 || true)"
+    electrum_version_value="${version}"
+    printf '%s\n' "${electrum_version_value}"
 }
 
 
@@ -150,17 +174,43 @@ electrum_daemon_running() {
     timeout 1 "${ELECTRUM_BIN}" getinfo </dev/null >/dev/null 2>&1
 }
 
+remove_electrum_runtime_socket() {
+    local socket="${ELECTRUMDIR}/daemon_rpc_socket"
+
+    # The socket is daemon runtime state, not wallet state.  The vault
+    # archive intentionally accepts regular files only, so remove this exact
+    # socket after the daemon has stopped and before packing the vault.
+    if [[ -S "${socket}" ]]; then
+        rm -f -- "${socket}" || return 1
+    fi
+    [[ ! -S "${socket}" ]]
+}
+
 stop_daemon() {
     local attempts
 
     electrum_probe stop >/dev/null 2>&1 || true
     for ((attempts = 50; attempts > 0; attempts--)); do
         if ! electrum_daemon_running; then
+            if ! remove_electrum_runtime_socket; then
+                return 1
+            fi
             return 0
         fi
         sleep 0.1
     done
     return 1
+}
+
+save_wallet_state() {
+    while ! stop_daemon; do
+        tty_line '[warn] Electrum is still stopping; waiting before saving the wallet.'
+        sleep 1
+    done
+    vault_save_until_clean
+    # Saving stops the Electrum daemon.  Keep the selected server, but make
+    # the next wallet operation start the daemon again without rediscovery.
+    electrum_ready=0
 }
 
 stop_wallet_child() {
@@ -655,8 +705,8 @@ discover_best_server() {
 }
 
 ensure_electrum_ready() {
-    # Keep interactive discovery lazy, matching Monero: vault first, then the
-    # selected wallet/network operation, then discovery immediately before it.
+    # Discover exactly once after the vault is unlocked and before the wallet
+    # menu. All wallet operations then reuse the same selected server.
     if [[ "${electrum_ready}" -eq 1 ]]; then
         return 0
     fi
@@ -961,7 +1011,7 @@ create_wallet() {
         pause_screen
     fi
     if [[ "${wallet_changed}" -eq 1 ]]; then
-        vault_save_until_clean
+        save_wallet_state
     fi
 }
 
@@ -1006,7 +1056,7 @@ restore_wallet() {
         pause_screen
     fi
     if [[ "${wallet_changed}" -eq 1 ]]; then
-        vault_save_until_clean
+        save_wallet_state
     fi
 }
 
@@ -1049,7 +1099,7 @@ show_wallets() {
                 pause_screen
             elif unlock_wallet "${wallets[${index}]}"; then
                 wallet_menu "${wallets[${index}]}"
-                vault_save_until_clean
+                save_wallet_state
             fi
         fi
     done
@@ -1124,6 +1174,96 @@ render_new_receive_address() {
 
 show_new_receive_address() {
     show_screen render_new_receive_address "$@"
+}
+
+render_transaction_history() {
+    local wallet="$1" history error_file
+    screen_header 'Transaction history' 'On-chain activity reported by Electrum.'
+    error_file="$(mktemp /tmp/mgla-electrum-history.XXXXXX)"
+    history="$(electrum_cli -w "${wallet}" onchain_history 2>"${error_file}" || true)"
+    if [[ -z "${history}" ]]; then
+        tty_line 'Could not read the wallet transaction history.'
+        sed -n '1,12p' "${error_file}" 2>/dev/null || true
+        rm -f -- "${error_file}"
+        return 0
+    fi
+    if ! printf '%s\n' "${history}" | "${WALLET_VIEW_BIN}" history; then
+        tty_line 'Electrum returned an unreadable transaction history.'
+        sed -n '1,12p' "${error_file}" 2>/dev/null || true
+    fi
+    rm -f -- "${error_file}"
+}
+
+show_transaction_history() {
+    show_screen render_transaction_history "$@"
+}
+
+render_wallet_addresses() {
+    local wallet="$1" receiving change receiving_unused change_unused error_file failed=0
+    screen_header 'Wallet addresses' 'Deterministic receiving and change addresses known to Electrum.'
+    error_file="$(mktemp /tmp/mgla-electrum-addresses.XXXXXX)"
+
+    if receiving="$(electrum_cli -w "${wallet}" listaddresses --receiving --balance --labels 2>"${error_file}")"; then
+        :
+    else
+        failed=1
+    fi
+    if receiving_unused="$(electrum_cli -w "${wallet}" listaddresses --receiving --unused 2>>"${error_file}")"; then
+        :
+    else
+        failed=1
+    fi
+    if change="$(electrum_cli -w "${wallet}" listaddresses --change --balance --labels 2>>"${error_file}")"; then
+        :
+    else
+        failed=1
+    fi
+    if change_unused="$(electrum_cli -w "${wallet}" listaddresses --change --unused 2>>"${error_file}")"; then
+        :
+    else
+        failed=1
+    fi
+
+    if ((failed)) || [[ -z "${receiving}" || -z "${receiving_unused}" || -z "${change}" || -z "${change_unused}" ]]; then
+        tty_line 'Could not read the wallet address list.'
+        sed -n '1,12p' "${error_file}" 2>/dev/null || true
+        rm -f -- "${error_file}"
+        return 0
+    fi
+
+    if ! printf '{"receiving":%s,"receiving_unused":%s,"change":%s,"change_unused":%s}\n' \
+        "${receiving}" "${receiving_unused}" "${change}" "${change_unused}" \
+        | "${WALLET_VIEW_BIN}" addresses; then
+        tty_line 'Electrum returned an unreadable address list.'
+        sed -n '1,12p' "${error_file}" 2>/dev/null || true
+    fi
+    rm -f -- "${error_file}"
+}
+
+show_wallet_addresses() {
+    show_screen render_wallet_addresses "$@"
+}
+
+render_wallet_coins() {
+    local wallet="$1" coins error_file
+    screen_header 'Wallet coins (UTXO)' 'Spendable outputs currently known to Electrum.'
+    error_file="$(mktemp /tmp/mgla-electrum-coins.XXXXXX)"
+    coins="$(electrum_cli -w "${wallet}" listunspent 2>"${error_file}" || true)"
+    if [[ -z "${coins}" ]]; then
+        tty_line 'Could not read the wallet UTXO set.'
+        sed -n '1,12p' "${error_file}" 2>/dev/null || true
+        rm -f -- "${error_file}"
+        return 0
+    fi
+    if ! printf '%s\n' "${coins}" | "${WALLET_VIEW_BIN}" utxo; then
+        tty_line 'Electrum returned an unreadable UTXO list.'
+        sed -n '1,12p' "${error_file}" 2>/dev/null || true
+    fi
+    rm -f -- "${error_file}"
+}
+
+show_wallet_coins() {
+    show_screen render_wallet_coins "$@"
 }
 
 render_wallet_info() {
@@ -1379,13 +1519,16 @@ wallet_menu() {
     while true; do
         screen_header 'Bitcoin Electrum wallet' "Wallet: $(basename "${wallet}")"
         tty_line '1. Balance'
-        tty_line '2. Receive address'
-        tty_line '3. New receive address'
-        tty_line '4. Send BTC'
-        tty_line '5. Sync status'
-        tty_line '6. Fee estimates'
-        tty_line '7. Wallet info'
-        tty_line '8. Change wallet password'
+        tty_line '2. Transaction history'
+        tty_line '3. Addresses'
+        tty_line '4. Coins (UTXO)'
+        tty_line '5. Receive address'
+        tty_line '6. New receive address'
+        tty_line '7. Send BTC'
+        tty_line '8. Sync status'
+        tty_line '9. Fee estimates'
+        tty_line '10. Wallet info'
+        tty_line '11. Change wallet password'
         tty_line ''
         tty_line 'b. Back'
         tty_line 'x. Exit'
@@ -1398,13 +1541,16 @@ wallet_menu() {
         fi
         case "${choice}" in
             1) show_wallet_balance "${wallet}" ;;
-            2) show_receive_address "${wallet}" ;;
-            3) show_new_receive_address "${wallet}" ;;
-            4) send_btc "${wallet}" ;;
-            5) show_wallet_sync "${wallet}" ;;
-            6) show_fee_estimates ;;
-            7) show_wallet_info "${wallet}" ;;
-            8)
+            2) show_transaction_history "${wallet}" ;;
+            3) show_wallet_addresses "${wallet}" ;;
+            4) show_wallet_coins "${wallet}" ;;
+            5) show_receive_address "${wallet}" ;;
+            6) show_new_receive_address "${wallet}" ;;
+            7) send_btc "${wallet}" ;;
+            8) show_wallet_sync "${wallet}" ;;
+            9) show_fee_estimates ;;
+            10) show_wallet_info "${wallet}" ;;
+            11)
                 screen_header 'Change wallet password' 'Electrum will ask for the current and new passwords.'
                 electrum_tty -w "${wallet}" password || true
                 pause_screen
@@ -1546,10 +1692,11 @@ if ! configure_electrum; then
     exit 1
 fi
 
+if ! ensure_electrum_ready; then
+    exit 1
+fi
+
 if [[ "${MGLA_CI:-0}" == 1 ]]; then
-    if ! ensure_electrum_ready; then
-        exit 1
-    fi
     info="$(electrum_cli getinfo 2>/dev/null || true)"
     if [[ "$(printf '%s\n' "${info}" | json_value connected)" != true ]]; then
         printf '%s\n' '[error] Electrum is not connected after onion discovery' >&2
