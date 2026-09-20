@@ -290,7 +290,7 @@ start_vault_session() {
 clear_wallet_root() {
     [[ "${vault_root}" == "${vault_root_expected}" ]] || return 1
     [[ -d "${vault_root}" ]] || return 0
-    if ! find "${vault_root}" -mindepth 1 -exec rm -rf -- {} + 2>/dev/null; then
+    if ! find "${vault_root}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; then
         return 1
     fi
     [[ -z "$(find "${vault_root}" -mindepth 1 -print -quit 2>/dev/null)" ]]

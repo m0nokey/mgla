@@ -12,6 +12,7 @@ ELECTRUM_BIN="/opt/venv/bin/electrum"
 WALLET_VIEW_BIN="/opt/app/wallet-view.py"
 ELECTRUMDIR="${ELECTRUMDIR:-/home/electrum/.electrum/bitcoin}"
 ELECTRUM_DAEMON_LOCKFILE="${ELECTRUMDIR}/daemon"
+ELECTRUM_DAEMON_SOCKET="${ELECTRUMDIR}/daemon_rpc_socket"
 WALLETS_DIR="${ELECTRUMDIR}/wallets"
 
 if [[ "${ELECTRUMDIR}" != "/home/electrum/.electrum/bitcoin" ]]; then
@@ -32,6 +33,7 @@ shutdown_quiet=0
 electrum_version_value=""
 tty_is_tty=0
 electrum_child_pid=""
+electrum_daemon_pid=""
 probe_height=""
 readonly MAX_INPUT_LENGTH=512
 readonly MAX_BTC_SATS=2100000000000000
@@ -173,6 +175,9 @@ electrum_tty() {
 }
 
 electrum_daemon_running() {
+    if [[ -n "${electrum_daemon_pid}" ]] && kill -0 "${electrum_daemon_pid}" 2>/dev/null; then
+        return 0
+    fi
     [[ -e "${ELECTRUM_DAEMON_LOCKFILE}" ]]
 }
 
@@ -180,19 +185,35 @@ remove_electrum_runtime_sockets() {
     vault_remove_runtime_sockets
 }
 
+remove_electrum_runtime_state() {
+    remove_electrum_runtime_sockets || return 1
+    rm -f -- "${ELECTRUM_DAEMON_LOCKFILE}" "${ELECTRUM_DAEMON_SOCKET}"
+}
+
 stop_daemon() {
-    local attempts
+    local attempts pid="${electrum_daemon_pid:-}"
 
     electrum_probe stop >/dev/null 2>&1 || true
-    for ((attempts = 50; attempts > 0; attempts--)); do
-        if ! electrum_daemon_running; then
-            if ! remove_electrum_runtime_sockets; then
+    for ((attempts = 150; attempts > 0; attempts--)); do
+        if [[ -n "${pid}" ]]; then
+            if ! kill -0 "${pid}" 2>/dev/null; then
+                wait "${pid}" 2>/dev/null || true
+                electrum_daemon_pid=""
+                pid=""
+            fi
+        fi
+        if [[ -z "${pid}" && ! -e "${ELECTRUM_DAEMON_LOCKFILE}" ]]; then
+            if ! remove_electrum_runtime_state; then
                 return 1
             fi
             return 0
         fi
         sleep 0.1
     done
+
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+        kill -TERM "${pid}" 2>/dev/null || true
+    fi
     return 1
 }
 
@@ -528,6 +549,12 @@ configure_electrum() {
 wait_for_connection() {
     local info connected attempt
     for ((attempt = 1; attempt <= 25; attempt++)); do
+        if [[ -n "${electrum_daemon_pid}" ]] &&
+            ! kill -0 "${electrum_daemon_pid}" 2>/dev/null; then
+            wait "${electrum_daemon_pid}" 2>/dev/null || true
+            electrum_daemon_pid=""
+            return 1
+        fi
         info="$(electrum_probe getinfo 2>/dev/null || true)"
         connected="$(printf '%s\n' "${info}" | json_value connected)"
         if [[ "${connected}" == "true" ]]; then
@@ -545,8 +572,23 @@ start_daemon() {
     if [[ "${connected}" == "true" ]]; then
         return 0
     fi
-    electrum_probe daemon -d >/dev/null 2>&1 || true
-    wait_for_connection
+
+    if electrum_daemon_running; then
+        if ! stop_daemon; then
+            return 1
+        fi
+    fi
+
+    # Keep the daemon in the launcher's process tree. The detached `daemon -d`
+    # mode exits in the parent before the child has finished flushing wallet
+    # state, which can race the vault pack operation.
+    "${ELECTRUM_BIN}" daemon </dev/null >/dev/null 2>&1 &
+    electrum_daemon_pid=$!
+    if wait_for_connection; then
+        return 0
+    fi
+    stop_daemon || true
+    return 1
 }
 
 load_server_candidates() {
@@ -604,7 +646,9 @@ probe_server() {
     probe_height=""
     stop_daemon
     set_config server "${server}"
-    electrum_probe daemon -d >/dev/null 2>&1 || true
+    if ! start_daemon; then
+        return 1
+    fi
 
     for ((attempt = 1; attempt <= PROBE_ATTEMPTS; attempt++)); do
         info="$(electrum_probe getinfo 2>/dev/null || true)"
