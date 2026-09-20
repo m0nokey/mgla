@@ -215,7 +215,14 @@ services:
     volumes:
       - "${wallet_store_host_dir:-/tmp/mgla-wallets}:/bitcoin/vault-store:rw"
     healthcheck:
-      test: ["CMD", "/opt/venv/bin/electrum", "--offline", "--version"]
+      # The Electrum CLI initializes SimpleConfig even for `--version` and
+      # creates the datadir. Keep the healthcheck read-only so it cannot race
+      # with vault unpacking or recreate entries in the private tmpfs.
+      test:
+        - CMD
+        - /opt/venv/bin/python
+        - -c
+        - from electrum.version import ELECTRUM_VERSION; print(ELECTRUM_VERSION)
       interval: 30s
       timeout: 15s
       retries: 3
