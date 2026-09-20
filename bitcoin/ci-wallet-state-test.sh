@@ -19,6 +19,7 @@ HAPROXY_IP="${HAPROXY_IP:?HAPROXY_IP is required}"
 PROXY_CONFIG="socks5:${HAPROXY_IP}:9095"
 CI_VAULT_FILE="${VAULT_STORE}/ci-wallet-state.mgla"
 CI_WALLET="${WALLETS_DIR}/ci_state_wallet"
+DAEMON_LOCKFILE="${ELECTRUMDIR}/daemon"
 DAEMON_SOCKET="${ELECTRUMDIR}/daemon_rpc_socket"
 
 # shellcheck source=/opt/bitcoin/vault-launcher.sh
@@ -52,12 +53,16 @@ configure_electrum() {
     set_config network_timeout 20
 }
 
+electrum_daemon_running() {
+    [[ -e "${DAEMON_LOCKFILE}" ]]
+}
+
 stop_daemon() {
     local attempt
 
     electrum_probe stop >/dev/null 2>&1 || true
     for ((attempt = 1; attempt <= 50; attempt++)); do
-        if ! timeout 1 "${ELECTRUM_BIN}" getinfo </dev/null >/dev/null 2>&1; then
+        if ! electrum_daemon_running; then
             vault_remove_runtime_sockets
             return 0
         fi

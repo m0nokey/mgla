@@ -290,7 +290,10 @@ start_vault_session() {
 clear_wallet_root() {
     [[ "${vault_root}" == "${vault_root_expected}" ]] || return 1
     [[ -d "${vault_root}" ]] || return 0
-    find "${vault_root}" -mindepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+    if ! find "${vault_root}" -mindepth 1 -exec rm -rf -- {} + 2>/dev/null; then
+        return 1
+    fi
+    [[ -z "$(find "${vault_root}" -mindepth 1 -print -quit 2>/dev/null)" ]]
 }
 
 # The vault is a generic encrypted container. Wallet launchers decide how to organize their own files inside it.

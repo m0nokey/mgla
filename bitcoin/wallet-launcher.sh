@@ -11,6 +11,7 @@ fi
 ELECTRUM_BIN="/opt/venv/bin/electrum"
 WALLET_VIEW_BIN="/opt/app/wallet-view.py"
 ELECTRUMDIR="${ELECTRUMDIR:-/home/electrum/.electrum/bitcoin}"
+ELECTRUM_DAEMON_LOCKFILE="${ELECTRUMDIR}/daemon"
 WALLETS_DIR="${ELECTRUMDIR}/wallets"
 
 if [[ "${ELECTRUMDIR}" != "/home/electrum/.electrum/bitcoin" ]]; then
@@ -172,7 +173,7 @@ electrum_tty() {
 }
 
 electrum_daemon_running() {
-    timeout 1 "${ELECTRUM_BIN}" getinfo </dev/null >/dev/null 2>&1
+    [[ -e "${ELECTRUM_DAEMON_LOCKFILE}" ]]
 }
 
 remove_electrum_runtime_sockets() {
