@@ -80,6 +80,9 @@ jobs:
           # Follow the checked-in shared source modules and their contracts.
           shellcheck --external-sources --severity=warning "${shell_files[@]}"
 
+      - name: Test shared vault launcher lifecycle
+        run: bash shared/vault/launcher-test.sh
+
       - name: Validate Monero Compose profile
         run: |
           set -euxo pipefail

@@ -26,6 +26,7 @@ vault_mode=""
 vault_session_dir=""
 vault_session_socket=""
 vault_session_pid=""
+vault_output_quiet=0
 
 vault_configure() {
     if [[ "$#" -ne 7 ]]; then
@@ -51,6 +52,7 @@ vault_configure() {
     vault_session_dir=""
     vault_session_socket=""
     vault_session_pid=""
+    vault_output_quiet=0
 
     vault_validate_interface
 }
@@ -94,11 +96,16 @@ vault_unlock_mode() {
 }
 
 vault_tty_print() {
+    [[ "${vault_output_quiet:-0}" -eq 1 ]] && return 0
     vault_tty_printf '%s\n' "${1:-}"
 }
 
 vault_with_tty_password() {
-    "${vault_binary}" --tty-password "$@"
+    # The password prompt is written directly to /dev/tty by mgla-vault. Keep
+    # that prompt available, but never leak implementation details from its
+    # stderr into the wallet UI. The launcher emits the appropriate generic
+    # result message instead.
+    "${vault_binary}" --tty-password "$@" 2>/dev/null
 }
 
 choose_vault_mode() {
@@ -148,7 +155,7 @@ choose_vault_mode() {
 }
 
 vault_session_request() {
-    local command="${1:-}" response
+    local command="${1:-}"
 
     if [[ "${vault_mode}" != "session" ]]; then
         vault_tty_print "error: vault session is not active"
@@ -158,14 +165,11 @@ vault_session_request() {
         vault_tty_print "error: vault session socket is unavailable"
         return 1
     fi
-    if response="$("${vault_binary}" session-request "${vault_session_socket}" "${command}" 2>&1)"; then
+    if "${vault_binary}" session-request "${vault_session_socket}" "${command}" \
+        >/dev/null 2>&1; then
         return 0
     fi
-    if [[ -n "${response}" ]]; then
-        vault_tty_print "${response}"
-    else
-        vault_tty_print "error: vault session request failed"
-    fi
+    vault_tty_print "error: vault session request failed"
     return 1
 }
 
@@ -303,6 +307,16 @@ save_vault() {
 
     [[ "${vault_loaded}" -eq 1 && "${vault_dirty}" -eq 1 ]] || return 0
 
+    # Wallet daemons may leave Unix sockets in the shared root. They are
+    # runtime state and cannot be represented by the authenticated archive.
+    # Keep this preparation in the shared lifecycle so every wallet gets the
+    # same save contract.
+    if declare -F vault_remove_runtime_sockets >/dev/null 2>&1 &&
+        ! vault_remove_runtime_sockets; then
+        vault_tty_print "error: failed to prepare the wallet vault for saving"
+        return 1
+    fi
+
     vault_tty_print "Saving encrypted wallet vault..."
     if [[ "${vault_mode}" == "session" ]]; then
         if vault_session_request pack; then
@@ -326,6 +340,29 @@ save_vault() {
 
     vault_tty_print "[error] failed to save encrypted wallet vault"
     return 1
+}
+
+vault_save_until_clean_quiet() {
+    local previous_quiet="${vault_output_quiet:-0}"
+
+    [[ "${vault_loaded}" -eq 1 && "${vault_dirty}" -eq 1 ]] || return 0
+    vault_output_quiet=1
+
+    # A launcher must not remove its temporary wallet root while it is dirty:
+    # the root is the only recoverable copy if a pack attempt is interrupted.
+    # Retry internally until the authenticated image is durable. Session mode
+    # does not prompt; Prompt mode may still display its unavoidable password
+    # prompt through /dev/tty.
+    while [[ "${vault_loaded}" -eq 1 && "${vault_dirty}" -eq 1 ]]; do
+        if save_vault; then
+            vault_output_quiet="${previous_quiet}"
+            return 0
+        fi
+        sleep 1
+    done
+
+    vault_output_quiet="${previous_quiet}"
+    return 0
 }
 
 vault_save_until_clean() {

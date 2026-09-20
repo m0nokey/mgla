@@ -183,8 +183,7 @@ cleanup() {
 }
 
 on_sigint() {
-    echo
-    echo "[warn] interrupted, waiting for the wallet launcher to save its state..."
+    printf '\n%s\n' "Closing wallet..."
     if [[ -n "${wallet_exec_pid:-}" ]]; then
         trap '' INT TERM HUP QUIT
         kill -INT "${wallet_exec_pid}" >/dev/null 2>&1 || true

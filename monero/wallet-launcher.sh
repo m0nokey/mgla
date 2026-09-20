@@ -37,6 +37,7 @@ cleanup() {
         return "${exit_code}"
     fi
     cleanup_done=1
+    shutdown_quiet=1
     trap '' INT TERM HUP QUIT
 
     if declare -F stop_wallet_child >/dev/null 2>&1; then
@@ -45,9 +46,9 @@ cleanup() {
     # Persist dirty wallet data before clearing the temporary wallet root,
     # including signal and error exits. Retry until the encrypted image is
     # durable; clearing the temporary root after a failed save would lose it.
-    if declare -F vault_save_until_clean >/dev/null 2>&1 &&
+    if declare -F vault_save_until_clean_quiet >/dev/null 2>&1 &&
         [[ "${vault_loaded:-0}" -eq 1 && "${vault_dirty:-0}" -eq 1 ]]; then
-        vault_save_until_clean
+        vault_save_until_clean_quiet
     fi
     if declare -F stop_vault_session >/dev/null 2>&1; then
         stop_vault_session || true
@@ -87,22 +88,22 @@ stop_wallet_child() {
         sleep 0.1
     done
 
-    tty_print '[warn] Monero wallet is still closing; waiting to preserve wallet state.'
+    if [[ "${shutdown_quiet:-0}" -ne 1 ]]; then
+        tty_print '[warn] Monero wallet is still closing; waiting to preserve wallet state.'
+    fi
     wait "${pid}" 2>/dev/null || true
     wallet_pid=""
 }
 
 on_sigint() {
+    shutdown_quiet=1
     stop_wallet_child
-    echo
-    echo "Interrupted by Ctrl+C. Exiting..."
     exit 130
 }
 
 on_sigterm() {
+    shutdown_quiet=1
     stop_wallet_child
-    echo
-    echo "Received SIGTERM. Exiting..."
     exit 143
 }
 
@@ -112,6 +113,7 @@ trap 'cleanup' EXIT
 
 wallet_pid=""
 cleanup_done=0
+shutdown_quiet=0
 socks_port="${socks_port:-9095}"
 daemon_mode="${daemon_mode:-untrusted}"
 

@@ -27,6 +27,7 @@ SERVER_CANDIDATES=()
 discovered_server=""
 
 electrum_ready=0
+shutdown_quiet=0
 electrum_version_value=""
 tty_is_tty=0
 electrum_child_pid=""
@@ -231,14 +232,16 @@ stop_wallet_child() {
         sleep 0.1
     done
 
-    tty_line '[warn] Electrum is still closing; waiting to preserve wallet state.'
+    if [[ "${shutdown_quiet:-0}" -ne 1 ]]; then
+        tty_line '[warn] Electrum is still closing; waiting to preserve wallet state.'
+    fi
     wait "${pid}" 2>/dev/null || true
     electrum_child_pid=""
 }
 
 on_signal() {
+    shutdown_quiet=1
     stop_wallet_child
-    printf '\n%s\n' 'Interrupted by Ctrl+C. Exiting...'
     exit 130
 }
 
@@ -249,15 +252,16 @@ cleanup() {
         return "${exit_code}"
     fi
     cleanup_done=1
+    shutdown_quiet=1
     trap '' INT TERM HUP QUIT
 
     stop_wallet_child
     if [[ "${vault_loaded:-0}" -eq 1 && "${vault_dirty:-0}" -eq 1 ]]; then
         while ! stop_daemon; do
-            vault_tty_print '[warn] Electrum is still stopping; waiting before saving the wallet.'
+            :
             sleep 1
         done
-        vault_save_until_clean
+        vault_save_until_clean_quiet
     else
         stop_daemon || true
     fi
