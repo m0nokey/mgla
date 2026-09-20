@@ -440,6 +440,12 @@ fn archive_source(source: &Path, maximum_size: u64) -> VaultResult<File> {
             written: 0,
         };
         let mut builder = Builder::new(limited);
+        // Wallet databases such as Electrum's blockchain_headers can be
+        // sparse files. Store their logical contents as regular tar files so
+        // the archive format remains limited to ordinary files and
+        // directories; the archive validator intentionally rejects special
+        // tar entry types.
+        builder.sparse(false);
         builder.append_dir_all(".", source)?;
         builder.finish()?;
         let mut limited = builder.into_inner()?;
@@ -1521,6 +1527,43 @@ mod tests {
             }
         }
         assert!(special_count >= GENERATED_PASSWORD_MIN_SPECIALS);
+    }
+
+    #[test]
+    fn archives_sparse_files_as_regular_files() {
+        let root = tempdir().expect("test root");
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        let sparse_path = source.join("blockchain_headers");
+        let logical_size = (SECTOR_SIZE * 2 + 7) as u64;
+        let marker_offset = SECTOR_SIZE as u64 + 3;
+
+        fs::create_dir_all(&source).expect("source directory");
+        fs::create_dir(&destination).expect("destination directory");
+        let mut sparse_file = File::create(&sparse_path).expect("sparse file");
+        sparse_file
+            .set_len(logical_size)
+            .expect("set sparse file length");
+        sparse_file
+            .seek(SeekFrom::Start(marker_offset))
+            .expect("seek sparse file");
+        sparse_file
+            .write_all(b"headers")
+            .expect("write sparse file marker");
+        sparse_file.sync_all().expect("sync sparse file");
+
+        let archive = archive_source(&source, 1024 * 1024).expect("archive sparse file");
+        unpack_archive(archive, &destination).expect("unpack sparse file");
+        let unpacked =
+            fs::read(destination.join("blockchain_headers")).expect("read unpacked sparse file");
+        assert_eq!(unpacked.len(), logical_size as usize);
+        assert_eq!(
+            &unpacked[marker_offset as usize..marker_offset as usize + b"headers".len()],
+            b"headers"
+        );
+        assert!(unpacked[..marker_offset as usize]
+            .iter()
+            .all(|&byte| byte == 0));
     }
 
     #[test]

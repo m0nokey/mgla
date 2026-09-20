@@ -33,8 +33,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/launcher.sh"
 vault_tty_printf() {
     :
 }
+# These globals are consumed by functions defined in the sourced module.
+# shellcheck disable=SC2034
 vault_loaded=1
 vault_dirty=1
+# shellcheck disable=SC2034
 vault_mode=prompt
 runtime_cleanup_calls=0
 password_pack_calls=0
