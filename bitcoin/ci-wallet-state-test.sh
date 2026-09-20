@@ -54,7 +54,8 @@ configure_electrum() {
 }
 
 electrum_daemon_running() {
-    [[ -e "${DAEMON_LOCKFILE}" ]]
+    [[ -e "${DAEMON_LOCKFILE}" ||
+        -S "${DAEMON_SOCKET}" ]]
 }
 
 stop_daemon() {
