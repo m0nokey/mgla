@@ -54,8 +54,12 @@ configure_electrum() {
 }
 
 electrum_daemon_running() {
-    [[ -e "${DAEMON_LOCKFILE}" ||
-        -S "${DAEMON_SOCKET}" ]]
+    [[ -e "${DAEMON_LOCKFILE}" ]]
+}
+
+electrum_daemon_ready() {
+    [[ -s "${DAEMON_LOCKFILE}" && -S "${DAEMON_SOCKET}" ]] || return 1
+    electrum_probe getinfo >/dev/null 2>&1
 }
 
 stop_daemon() {
@@ -101,15 +105,18 @@ configure_electrum
 electrum_cli --offline -w "${CI_WALLET}" create \
     --password "${ci_wallet_password}" >/dev/null 2>&1
 
-# Start a local Electrum daemon only to create its runtime Unix socket.
-# It must be removed before the vault archive is packed.
+# Start a local Electrum daemon and wait for its RPC state to be ready. The
+# socket alone is not a readiness signal: Electrum creates it before writing
+# the connection tuple to the lockfile.
 electrum_probe daemon -d >/dev/null 2>&1 || true
 for ((attempt = 1; attempt <= 80; attempt++)); do
-    [[ -S "${DAEMON_SOCKET}" ]] && break
+    if electrum_daemon_ready; then
+        break
+    fi
     sleep 0.1
 done
-if [[ ! -S "${DAEMON_SOCKET}" ]]; then
-    printf '%s\n' '[error] wallet state test did not create the Electrum runtime socket' >&2
+if ! electrum_daemon_ready; then
+    printf '%s\n' '[error] wallet state test did not reach Electrum RPC readiness' >&2
     exit 1
 fi
 
