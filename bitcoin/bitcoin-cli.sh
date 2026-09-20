@@ -361,6 +361,11 @@ run_electrum_checks() {
     printf '%s\n' '[ok] Electrum CLI, input validation, and Tor proxy checks passed'
 }
 
+run_wallet_state_checks() {
+    info 'checking Bitcoin wallet create, close, save, and reopen state'
+    docker exec -i "${bitcoin_container}" /bin/bash -s < "${module_dir}/ci-wallet-state-test.sh"
+}
+
 export_runtime_config() {
     export project
     export exit_a_container exit_b_container haproxy_container bitcoin_container
@@ -432,6 +437,9 @@ main() {
     run_electrum_checks
 
     if [[ "${CI:-0}" == 1 || "${SKIP_WALLET_MENU:-0}" == 1 ]]; then
+        if [[ "${CI:-0}" == 1 ]]; then
+            run_wallet_state_checks
+        fi
         info 'CI mode enabled; wallet menu skipped'
         return 0
     fi

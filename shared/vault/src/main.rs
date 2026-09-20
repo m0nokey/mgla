@@ -411,10 +411,16 @@ fn validate_archive(file: &mut File) -> VaultResult<()> {
     let mut archive = Archive::new(&mut *file);
     for entry in archive.entries()? {
         let entry = entry?;
-        validate_entry_path(&entry.path()?)?;
+        let path = entry.path()?.into_owned();
+        validate_entry_path(&path)?;
         let entry_type = entry.header().entry_type();
         if !(entry_type.is_file() || entry_type.is_dir()) {
-            return Err(invalid_data("vault archive contains a non-file entry").into());
+            return Err(invalid_data(format!(
+                "vault archive contains unsupported {:?} entry: {}",
+                entry_type,
+                path.display()
+            ))
+            .into());
         }
     }
     file.seek(SeekFrom::Start(0))?;
@@ -833,10 +839,16 @@ fn unpack_archive(mut archive: File, destination: &Path) -> VaultResult<()> {
     let mut tar_archive = Archive::new(&mut archive);
     for entry in tar_archive.entries()? {
         let mut entry = entry?;
-        validate_entry_path(&entry.path()?)?;
+        let path = entry.path()?.into_owned();
+        validate_entry_path(&path)?;
         let entry_type = entry.header().entry_type();
         if !(entry_type.is_file() || entry_type.is_dir()) {
-            return Err(invalid_data("vault archive contains a non-file entry").into());
+            return Err(invalid_data(format!(
+                "vault archive contains unsupported {:?} entry: {}",
+                entry_type,
+                path.display()
+            ))
+            .into());
         }
         entry.unpack_in(destination)?;
     }

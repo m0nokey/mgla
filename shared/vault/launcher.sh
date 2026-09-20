@@ -582,3 +582,16 @@ open_or_create_vault() {
         return 1
     fi
 }
+
+vault_remove_runtime_sockets() {
+    local runtime_socket remaining_socket
+
+    # Unix sockets are daemon runtime state, not wallet state. The vault
+    # archive accepts regular files and directories only; remove all runtime
+    # sockets below the shared wallet root before packing.
+    while IFS= read -r -d '' runtime_socket; do
+        rm -f -- "${runtime_socket}" || return 1
+    done < <(find "${vault_root}" -type s -print0 2>/dev/null)
+    remaining_socket="$(find "${vault_root}" -type s -print -quit 2>/dev/null || true)"
+    [[ -z "${remaining_socket}" ]]
+}

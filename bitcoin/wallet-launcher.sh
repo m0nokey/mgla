@@ -174,16 +174,8 @@ electrum_daemon_running() {
     timeout 1 "${ELECTRUM_BIN}" getinfo </dev/null >/dev/null 2>&1
 }
 
-remove_electrum_runtime_socket() {
-    local socket="${ELECTRUMDIR}/daemon_rpc_socket"
-
-    # The socket is daemon runtime state, not wallet state.  The vault
-    # archive intentionally accepts regular files only, so remove this exact
-    # socket after the daemon has stopped and before packing the vault.
-    if [[ -S "${socket}" ]]; then
-        rm -f -- "${socket}" || return 1
-    fi
-    [[ ! -S "${socket}" ]]
+remove_electrum_runtime_sockets() {
+    vault_remove_runtime_sockets
 }
 
 stop_daemon() {
@@ -192,7 +184,7 @@ stop_daemon() {
     electrum_probe stop >/dev/null 2>&1 || true
     for ((attempts = 50; attempts > 0; attempts--)); do
         if ! electrum_daemon_running; then
-            if ! remove_electrum_runtime_socket; then
+            if ! remove_electrum_runtime_sockets; then
                 return 1
             fi
             return 0
