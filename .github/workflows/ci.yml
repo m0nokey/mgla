@@ -166,6 +166,12 @@ jobs:
         working-directory: shared/vault
         run: cargo audit
 
+      - name: Install latest stable Trivy
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: latest
+          cache: false
+
       - name: Scan Docker and Compose configuration
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -175,7 +181,7 @@ jobs:
           format: table
           exit-code: "1"
           severity: MEDIUM,HIGH,CRITICAL
-          version: v0.74.0
+          skip-setup-trivy: true
 
       - name: Scan repository for secrets
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -185,7 +191,7 @@ jobs:
           scanners: secret
           format: table
           exit-code: "1"
-          version: v0.74.0
+          skip-setup-trivy: true
 
   osv-scan:
     name: OSV dependency scan
@@ -203,7 +209,6 @@ jobs:
       upload-sarif: true
       fail-on-vuln: true
       runs-on: ubuntu-24.04
-
 
   codeql:
     name: CodeQL (${{ matrix.language }})
@@ -297,72 +302,7 @@ jobs:
         run: bash bitcoin/bitcoin-cli.sh
 
       - name: Prepare security report directory
-        run: mkdir -p trivy-reports grype-reports security-reports
-
-      - name: Generate exit security report
-        id: trivy_exit_report
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-exit:${{ github.sha }}-${{ matrix.architecture }}
-          format: sarif
-          output: trivy-reports/trivy-exit-${{ matrix.architecture }}.sarif
-          exit-code: "0"
-          ignore-unfixed: false
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-
-      - name: Generate HAProxy security report
-        id: trivy_haproxy_report
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-haproxy:${{ github.sha }}-${{ matrix.architecture }}
-          format: sarif
-          output: trivy-reports/trivy-haproxy-${{ matrix.architecture }}.sarif
-          exit-code: "0"
-          ignore-unfixed: false
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-
-      - name: Generate Monero security report
-        id: trivy_monero_report
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-monero:${{ github.sha }}-${{ matrix.architecture }}
-          format: sarif
-          output: trivy-reports/trivy-monero-${{ matrix.architecture }}.sarif
-          exit-code: "0"
-          ignore-unfixed: false
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-
-      - name: Generate Bitcoin security report
-        id: trivy_bitcoin_report
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-bitcoin:${{ github.sha }}-${{ matrix.architecture }}
-          format: sarif
-          output: trivy-reports/trivy-bitcoin-${{ matrix.architecture }}.sarif
-          exit-code: "0"
-          ignore-unfixed: false
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-
+        run: mkdir -p grype-reports security-reports
 
       - name: Generate exit Grype security report
         id: grype_exit
@@ -484,7 +424,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p security-reports
-          find trivy-reports grype-reports -maxdepth 1 -type f -name '*.sarif' -exec cp {} security-reports/ \;
+          find grype-reports -maxdepth 1 -type f -name '*.sarif' -exec cp {} security-reports/ \;
           test -n "$(find security-reports -maxdepth 1 -type f -name '*.sarif' -print -quit)"
 
       - name: Upload security report artifact
@@ -495,78 +435,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Scan exit image for release blockers
-        id: trivy_exit_gate
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-exit:${{ github.sha }}-${{ matrix.architecture }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: CRITICAL,HIGH,MEDIUM
-
-      - name: Scan HAProxy image for release blockers
-        id: trivy_haproxy_gate
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-haproxy:${{ github.sha }}-${{ matrix.architecture }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: CRITICAL,HIGH,MEDIUM
-
-      - name: Scan Monero image for release blockers
-        id: trivy_monero_gate
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-monero:${{ github.sha }}-${{ matrix.architecture }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: CRITICAL,HIGH,MEDIUM
-
-      - name: Scan Bitcoin image for release blockers
-        id: trivy_bitcoin_gate
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-bitcoin:${{ github.sha }}-${{ matrix.architecture }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: CRITICAL,HIGH,MEDIUM
-
-
       - name: Enforce image security scan results
         if: always()
         env:
-          TRIVY_EXIT_REPORT: ${{ steps.trivy_exit_report.outcome }}
-          TRIVY_HAPROXY_REPORT: ${{ steps.trivy_haproxy_report.outcome }}
-          TRIVY_MONERO_REPORT: ${{ steps.trivy_monero_report.outcome }}
-          TRIVY_BITCOIN_REPORT: ${{ steps.trivy_bitcoin_report.outcome }}
-          TRIVY_EXIT_GATE: ${{ steps.trivy_exit_gate.outcome }}
-          TRIVY_HAPROXY_GATE: ${{ steps.trivy_haproxy_gate.outcome }}
-          TRIVY_MONERO_GATE: ${{ steps.trivy_monero_gate.outcome }}
-          TRIVY_BITCOIN_GATE: ${{ steps.trivy_bitcoin_gate.outcome }}
           GRYPE_EXIT_REPORT: ${{ steps.grype_exit.outcome }}
           GRYPE_HAPROXY_REPORT: ${{ steps.grype_haproxy.outcome }}
           GRYPE_MONERO_REPORT: ${{ steps.grype_monero.outcome }}
@@ -577,15 +448,7 @@ jobs:
           GRYPE_BITCOIN_GATE: ${{ steps.grype_bitcoin_gate.outcome }}
         run: |
           set -euo pipefail
-          if [[ "${TRIVY_EXIT_REPORT}" == failure ||
-            "${TRIVY_HAPROXY_REPORT}" == failure ||
-            "${TRIVY_MONERO_REPORT}" == failure ||
-            "${TRIVY_BITCOIN_REPORT}" == failure ||
-            "${TRIVY_EXIT_GATE}" == failure ||
-            "${TRIVY_HAPROXY_GATE}" == failure ||
-            "${TRIVY_MONERO_GATE}" == failure ||
-            "${TRIVY_BITCOIN_GATE}" == failure ||
-            "${GRYPE_EXIT_REPORT}" == failure ||
+          if [[ "${GRYPE_EXIT_REPORT}" == failure ||
             "${GRYPE_HAPROXY_REPORT}" == failure ||
             "${GRYPE_MONERO_REPORT}" == failure ||
             "${GRYPE_BITCOIN_REPORT}" == failure ||
@@ -635,7 +498,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scanner: [trivy, grype]
         image: [exit, haproxy, monero, bitcoin]
         architecture: [amd64, arm64]
 
@@ -650,8 +512,8 @@ jobs:
       - name: Upload SARIF report
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
-          sarif_file: security-reports/${{ matrix.scanner }}-${{ matrix.image }}-${{ matrix.architecture }}.sarif
-          category: mgla-${{ matrix.scanner }}-${{ matrix.image }}-${{ matrix.architecture }}
+          sarif_file: security-reports/grype-${{ matrix.image }}-${{ matrix.architecture }}.sarif
+          category: mgla-grype-${{ matrix.image }}-${{ matrix.architecture }}
 
   publish:
     name: publish latest multi-architecture images
@@ -839,39 +701,7 @@ jobs:
             "${IMAGE_REGISTRY}/mgla-${{ matrix.image }}:latest"
 
       - name: Prepare rescan reports
-        run: mkdir -p trivy-reports grype-reports
-
-      - name: Scan latest image
-        id: trivy_report
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-${{ matrix.image }}:latest
-          format: sarif
-          output: trivy-reports/trivy-${{ matrix.image }}-${{ matrix.architecture }}.sarif
-          exit-code: "0"
-          ignore-unfixed: false
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-
-
-      - name: Check latest image with Trivy
-        id: trivy_blocker
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/m0nokey/mgla-${{ matrix.image }}:latest
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
-          scanners: vuln
-          version: v0.74.0
-          severity: CRITICAL,HIGH,MEDIUM
+        run: mkdir -p grype-reports
 
       - name: Check latest image with Grype
         id: grype_report
@@ -904,14 +734,6 @@ jobs:
         if: always()
         run: python3 shared/ci/security-summary.py
 
-      - name: Upload rescan SARIF
-        if: ${{ always() && hashFiles(format('trivy-reports/trivy-{0}-{1}.sarif', matrix.image, matrix.architecture)) != '' }}
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
-        with:
-          sarif_file: trivy-reports/trivy-${{ matrix.image }}-${{ matrix.architecture }}.sarif
-          category: mgla-latest-${{ matrix.image }}-${{ matrix.architecture }}
-
-
       - name: Upload latest Grype SARIF
         if: ${{ always() && hashFiles(format('grype-reports/grype-{0}-{1}.sarif', matrix.image, matrix.architecture)) != '' }}
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
@@ -922,15 +744,11 @@ jobs:
       - name: Fail on latest release blockers
         if: always()
         env:
-          TRIVY_REPORT_OUTCOME: ${{ steps.trivy_report.outcome }}
-          TRIVY_BLOCKER_OUTCOME: ${{ steps.trivy_blocker.outcome }}
           GRYPE_REPORT_OUTCOME: ${{ steps.grype_report.outcome }}
           GRYPE_GATE_OUTCOME: ${{ steps.grype_gate.outcome }}
         run: |
           set -euo pipefail
-          if [[ "${TRIVY_REPORT_OUTCOME}" == failure ||
-            "${TRIVY_BLOCKER_OUTCOME}" == failure ||
-            "${GRYPE_REPORT_OUTCOME}" == failure ||
+          if [[ "${GRYPE_REPORT_OUTCOME}" == failure ||
             "${GRYPE_GATE_OUTCOME}" == failure ]]; then
             echo "latest image scan found a fixable medium, high, or critical vulnerability or scanner failure" >&2
             exit 1

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write compact Trivy and Grype vulnerability tables to the Actions summary."""
+"""Write compact Grype vulnerability tables to the Actions summary."""
 
 from collections import Counter
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 
 SEVERITIES = ("NEGLIGIBLE", "UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL")
 IMAGE_ORDER = ("exit", "haproxy", "monero", "bitcoin")
-SCANNER_ORDER = ("trivy", "grype")
+SCANNER_ORDER = ("grype",)
 
 
 def classify(value):
@@ -112,7 +112,7 @@ def main():
     lines.extend(
         (
             "",
-            "Both scanners report all available findings, including vulnerabilities "
+            "Grype reports all available findings, including vulnerabilities "
             "without a known fix. Separate blocker scans fail on fixable MEDIUM, "
             "HIGH, and CRITICAL findings.",
             "",
