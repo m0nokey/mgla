@@ -271,6 +271,15 @@ jobs:
       - name: Set up BuildKit
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
+      - name: Build and run the standalone Monero scratch image
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          docker buildx build --load --platform "${PLATFORM}" \
+            --build-arg MONERO_VERSION --build-arg MONERO_COMMIT \
+            --file monero/Dockerfile.scratch --tag mgla-monero:scratch-smoke monero
+          docker run --rm --network none --platform "${PLATFORM}" mgla-monero:scratch-smoke
+
       - name: Build and run Monero integration checks
         env:
           CI: "1"
