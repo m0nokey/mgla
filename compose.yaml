@@ -188,8 +188,8 @@ services:
         vault: service:vault
       args:
         ALPINE_VERSION: "${alpine_version:-3.24}"
-        ELECTRUM_VERSION: "${electrum_version:-4.8.2}"
-        ELECTRUM_ARCHIVE_SHA256: "${electrum_archive_sha256:-f38cee333c866986cdfb304428fa7487affc429c3853fc80e9822bd420bbc229}"
+        ELECTRUM_VERSION: "${electrum_version:-4.8.3}"
+        ELECTRUM_ARCHIVE_SHA256: "${electrum_archive_sha256:-df41fa82e579f720a3859bff9de09dd98bb93079b01fa2973b73fdbdbfde7288}"
     init: true
     stop_signal: SIGTERM
     stop_grace_period: 10s
