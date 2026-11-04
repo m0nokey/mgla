@@ -171,7 +171,7 @@ The single `mgla CI` workflow performs:
 - Trivy Dockerfile/Compose misconfiguration checks;
 - Trivy repository secret scanning and OSV dependency scanning;
 - CodeQL analysis for GitHub Actions, Python, and Rust;
-- Trivy and Grype OS and library scans for all four final images;
+- Grype OS and library scans for all four final images;
 - SARIF upload to **Security → Code scanning**;
 - a per-image table in the workflow **Summary**;
 - scheduled rescans of every published `latest` image.

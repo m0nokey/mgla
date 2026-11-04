@@ -107,3 +107,17 @@ CI builds both supported architectures and verifies:
 The release policy blocks fixable `MEDIUM`, `HIGH`, and `CRITICAL` findings. See
 the [latest CI workflow](https://github.com/m0nokey/mgla/actions/workflows/ci.yml)
 for the Summary table and SARIF reports.
+
+## Experimental scratch build
+
+From the repository root, build and start the standalone wallet binary:
+
+```sh
+docker buildx build --load -f monero/Dockerfile.scratch \
+  -t mgla-monero:scratch-smoke monero
+docker run --rm --network none mgla-monero:scratch-smoke
+```
+
+This target checks static linkage and starts the wallet with `--version`.
+Use the Compose profile for wallet sessions with Tor and encrypted vaults.
+CI runs the scratch smoke test on Linux amd64 and arm64.

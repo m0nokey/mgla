@@ -1,0 +1,67 @@
+# syntax=docker/dockerfile:1.7
+
+FROM ubuntu:24.04 AS builder
+ARG TARGETARCH
+ARG MONERO_VERSION=v0.18.5.1
+ARG MONERO_COMMIT=4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5
+ARG BUILD_JOBS=2
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        automake autotools-dev build-essential ca-certificates cmake curl \
+        git gperf libtool pkg-config python3 xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src/monero
+RUN git clone --recursive --depth 1 --shallow-submodules --branch "${MONERO_VERSION}" \
+        https://github.com/monero-project/monero.git . \
+    && test "$(git rev-parse HEAD)" = "${MONERO_COMMIT}"
+
+# Boost 1.69 treats PTHREAD_STACK_MIN as a preprocessor constant.
+# Apply boostorg/thread#297 during the depends preprocessing step.
+RUN python3 - <<'PYTHON'
+from pathlib import Path
+
+recipe = Path("contrib/depends/packages/boost.mk")
+marker = "define $(package)_preprocess_cmds\n"
+source = recipe.read_text()
+assert source.count(marker) == 1
+fix = (
+    '  sed -i "s/^#if PTHREAD_STACK_MIN > 0/#ifdef PTHREAD_STACK_MIN/" '
+    'boost/thread/pthread/thread_data.hpp &&' + chr(92) + "\n"
+)
+recipe.write_text(source.replace(marker, marker + fix))
+PYTHON
+
+# Use Monero's pinned static dependency builds for the selected Linux target.
+# GITIAN=1 skips the optional legacy ccache build.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+        amd64) host=x86_64-linux-gnu ;; \
+        arm64) host=aarch64-linux-gnu ;; \
+        *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    make -C contrib/depends HOST="${host}" GITIAN=1 -j"${BUILD_JOBS}"; \
+    cmake -S . -B build/release \
+        -D CMAKE_TOOLCHAIN_FILE="/src/monero/contrib/depends/${host}/share/toolchain.cmake" \
+        -D CMAKE_EXE_LINKER_FLAGS=-static \
+        -D BUILD_TESTS=OFF \
+        -D BUILD_DOCUMENTATION=OFF \
+        -D BUILD_DEBUG_UTILITIES=OFF \
+        -D USE_DEVICE_TREZOR=OFF \
+        -D STACK_TRACE=OFF; \
+    cmake --build build/release --target simplewallet --parallel "${BUILD_JOBS}"; \
+    wallet=build/release/bin/monero-wallet-cli; \
+    strip --strip-unneeded "${wallet}"; \
+    readelf -lW "${wallet}" > /tmp/wallet-program-headers; \
+    readelf -dW "${wallet}" > /tmp/wallet-dynamic-section; \
+    if grep -qw INTERP /tmp/wallet-program-headers \
+        || grep -qw NEEDED /tmp/wallet-dynamic-section; then \
+        echo "Expected a statically linked wallet binary" >&2; exit 1; \
+    fi
+
+FROM scratch
+COPY --from=builder /src/monero/build/release/bin/monero-wallet-cli /monero-wallet-cli
+USER 1000:1000
+ENTRYPOINT ["/monero-wallet-cli"]
+CMD ["--version"]

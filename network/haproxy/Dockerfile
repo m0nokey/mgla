@@ -17,12 +17,12 @@ RUN apk add --no-cache \
     && printf '%s\n' UTC > /etc/timezone \
     && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
-        expat=2.8.4-r0 \
-        libexpat=2.8.4-r0 \
-        openssl=3.5.8-r0 \
-        libssl3=3.5.8-r0 \
-        libcrypto3=3.5.8-r0 \
-    && addgroup -g 4242 -S torctl 2>/dev/null || true \
+        "expat>=2.8.4-r0" \
+        "libexpat>=2.8.4-r0" \
+        "openssl>=3.5.8-r0" \
+        "libssl3>=3.5.8-r0" \
+        "libcrypto3>=3.5.8-r0" \
+    && addgroup -g 4242 -S torctl \
     && addgroup haproxy torctl \
     && install -d -m 0755 /usr/local/bin /etc/haproxy \
     && ln -sf /usr/local/bin/tor-control /usr/bin/tor-control

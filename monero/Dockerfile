@@ -42,13 +42,13 @@ RUN apk add --no-cache \
     && printf '%s\n' UTC > /etc/timezone \
     && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
-        expat=2.8.4-r0 \
-        expat-dev=2.8.4-r0 \
-        libexpat=2.8.4-r0 \
-        openssl=3.5.8-r0 \
-        openssl-dev=3.5.8-r0 \
-        libssl3=3.5.8-r0 \
-        libcrypto3=3.5.8-r0
+        "expat>=2.8.4-r0" \
+        "expat-dev>=2.8.4-r0" \
+        "libexpat>=2.8.4-r0" \
+        "openssl>=3.5.8-r0" \
+        "openssl-dev>=3.5.8-r0" \
+        "libssl3>=3.5.8-r0" \
+        "libcrypto3>=3.5.8-r0"
 
 WORKDIR /src
 
@@ -136,13 +136,13 @@ RUN apk add --no-cache \
     && command -v stty \
     && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
-        expat=2.8.4-r0 \
-        libexpat=2.8.4-r0 \
-        openssl=3.5.8-r0 \
-        libssl3=3.5.8-r0 \
-        libcrypto3=3.5.8-r0 \
-        nghttp2-libs=1.70.0-r0 \
-        unbound-libs=1.26.1-r0 \
+        "expat>=2.8.4-r0" \
+        "libexpat>=2.8.4-r0" \
+        "openssl>=3.5.8-r0" \
+        "libssl3>=3.5.8-r0" \
+        "libcrypto3>=3.5.8-r0" \
+        "nghttp2-libs>=1.70.0-r0" \
+        "unbound-libs>=1.26.1-r0" \
     && addgroup -g 1000 -S user \
     && adduser -S -D -H -u 1000 -G user -s /sbin/nologin user \
     && install -d -m 0755 -o root -g root /opt/app /opt/monero \

@@ -4,8 +4,8 @@ ARG ALPINE_VERSION=3.24
 
 FROM alpine:${ALPINE_VERSION} AS builder
 
-ARG ELECTRUM_VERSION=4.8.2
-ARG ELECTRUM_ARCHIVE_SHA256=f38cee333c866986cdfb304428fa7487affc429c3853fc80e9822bd420bbc229
+ARG ELECTRUM_VERSION=4.8.3
+ARG ELECTRUM_ARCHIVE_SHA256=df41fa82e579f720a3859bff9de09dd98bb93079b01fa2973b73fdbdbfde7288
 ARG THOMASV_FINGERPRINT=6694D8DE7BE8EE5631BED9502BD5824B7F9470E6
 
 ENV AIOHTTP_NO_EXTENSIONS=1 \
@@ -86,8 +86,8 @@ RUN set -Eeuo pipefail; \
 
 FROM alpine:${ALPINE_VERSION}
 
-ARG ELECTRUM_VERSION=4.8.2
-ARG ELECTRUM_ARCHIVE_SHA256=f38cee333c866986cdfb304428fa7487affc429c3853fc80e9822bd420bbc229
+ARG ELECTRUM_VERSION=4.8.3
+ARG ELECTRUM_ARCHIVE_SHA256=df41fa82e579f720a3859bff9de09dd98bb93079b01fa2973b73fdbdbfde7288
 
 ENV HOME=/home/electrum \
     ELECTRUMDIR=/home/electrum/.electrum \
@@ -119,7 +119,7 @@ RUN apk upgrade --no-cache \
     && printf '%s\n' UTC > /etc/timezone \
     && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
-        nghttp2-libs=1.70.0-r0 \
+        "nghttp2-libs>=1.70.0-r0" \
     && addgroup -g 1000 -S electrum \
     && adduser -S -D -H -u 1000 -G electrum -s /sbin/nologin electrum \
     && install -d -m 0700 -o 1000 -g 1000 /home/electrum/.electrum \
