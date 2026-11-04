@@ -10,6 +10,7 @@ ENV LANG=C.UTF-8 \
 RUN apk add --no-cache \
         ca-certificates \
         tzdata \
+        utmps-libs \
         tor \
         nyx \
         xxd \

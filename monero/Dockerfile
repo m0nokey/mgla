@@ -86,6 +86,7 @@ RUN apk add --no-cache \
         libgcc \
         libsodium \
         openssl \
+        utmps-libs \
         tzdata \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
     && printf '%s\n' UTC > /etc/timezone \

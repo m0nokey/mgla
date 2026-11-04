@@ -11,6 +11,7 @@ RUN apk add --no-cache \
         ca-certificates \
         haproxy \
         tzdata \
+        utmps-libs \
         python3 \
         xxd \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \

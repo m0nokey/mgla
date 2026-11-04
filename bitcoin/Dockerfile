@@ -96,6 +96,7 @@ RUN apk upgrade --no-cache \
         libsodium \
         libstdc++ \
         openssl \
+        utmps-libs \
         py3-cffi \
         python3 \
         tzdata \
