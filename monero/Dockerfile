@@ -2,16 +2,21 @@
 
 ARG ALPINE_VERSION=3.24
 
-FROM ubuntu:24.04 AS builder
+FROM debian:trixie-slim AS builder
 ARG TARGETARCH
 ARG MONERO_VERSION=v0.18.5.1
 ARG MONERO_COMMIT=4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5
 ARG BUILD_JOBS=2
 
+# Keep the GCC major version used by the existing pinned Monero build.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        automake autotools-dev build-essential ca-certificates cmake curl \
-        git gperf libtool pkg-config python3 xz-utils \
+        automake autotools-dev bzip2 ca-certificates cmake curl g++-13 \
+        gcc-13 git gperf libc6-dev libtool make patch pkg-config python3 xz-utils \
+    && ln -s /usr/bin/gcc-13 /usr/local/bin/gcc \
+    && ln -s /usr/bin/g++-13 /usr/local/bin/g++ \
+    && ln -s /usr/bin/gcc-13 /usr/local/bin/cc \
+    && ln -s /usr/bin/g++-13 /usr/local/bin/c++ \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src/monero
