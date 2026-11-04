@@ -4,6 +4,7 @@
 from collections import Counter
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -67,10 +68,12 @@ def load_counts(path):
 
 
 def main():
+    report_dir = Path(sys.argv[1] if len(sys.argv) > 1 else "grype-reports")
+    verified = report_dir.name == "grype-verified"
     rows = []
     missing_scanners = []
     for scanner in SCANNER_ORDER:
-        reports = sorted(Path(f"{scanner}-reports").glob(f"{scanner}-*.sarif"))
+        reports = sorted(report_dir.glob(f"{scanner}-*.sarif"))
         if not reports:
             missing_scanners.append(scanner)
         for path in reports:
@@ -89,7 +92,7 @@ def main():
     rows.sort(key=sort_key)
 
     lines = [
-        "## Container security summary",
+        "## Container security summary with verified VEX" if verified else "## Container security summary",
         "",
         "| Scanner | Image | Architecture | NEGLIGIBLE | UNKNOWN | LOW | MEDIUM | HIGH | CRITICAL | Total |",
         "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -112,9 +115,14 @@ def main():
     lines.extend(
         (
             "",
-            "Grype reports all available findings, including vulnerabilities "
-            "without a known fix. Separate blocker scans fail on fixable MEDIUM, "
-            "HIGH, and CRITICAL findings.",
+            (
+                "This table applies verified VEX statements. See the Grype audit artifact "
+                "for the original reports and the statements applied to these images."
+                if verified else
+                "Grype reports all available findings, including vulnerabilities "
+                "without a known fix. Separate blocker scans fail on fixable MEDIUM, "
+                "HIGH, and CRITICAL findings."
+            ),
             "",
         )
     )
