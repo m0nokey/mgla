@@ -96,6 +96,7 @@ RUN apk upgrade --no-cache \
         libsodium \
         libstdc++ \
         openssl \
+        utmps-libs \
         py3-cffi \
         python3 \
         tzdata \
@@ -104,6 +105,7 @@ RUN apk upgrade --no-cache \
     && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
         "nghttp2-libs>=1.70.0-r0" \
+        "sqlite-libs>=3.54.1-r0" \
     && addgroup -g 1000 -S electrum \
     && adduser -S -D -H -u 1000 -G electrum -s /sbin/nologin electrum \
     && install -d -m 0700 -o 1000 -g 1000 /home/electrum/.electrum \
@@ -131,6 +133,12 @@ RUN command -v curl \
     && ldd /opt/bitcoin/mgla-vault \
     && if ldd /opt/bitcoin/mgla-vault | grep -q 'not found'; then exit 1; fi \
     && chown -R 1000:1000 /home/electrum /bitcoin /opt/venv /opt/app /opt/bitcoin
+
+RUN --mount=type=bind,from=shared,source=runtime,target=/run/python-security \
+    /bin/sh /run/python-security/patch-python.sh
+
+COPY --from=hardened_busybox /busybox /bin/busybox
+RUN rm -f /usr/bin/wget /bin/wget
 
 # Retain the runtime files and APK inventory for image scanners.
 # The package manager and its repository configuration stay in this stage.

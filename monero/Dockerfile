@@ -86,6 +86,7 @@ RUN apk add --no-cache \
         libgcc \
         libsodium \
         openssl \
+        utmps-libs \
         tzdata \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
     && printf '%s\n' UTC > /etc/timezone \
@@ -114,6 +115,9 @@ RUN chmod 0755 /opt/app/monero /opt/monero/monero-wallet-cli /opt/monero/mgla-va
     && /opt/monero/monero-wallet-cli --version \
     && ldd /opt/monero/mgla-vault \
     && if ldd /opt/monero/mgla-vault | grep -q 'not found'; then exit 1; fi
+
+COPY --from=hardened_busybox /busybox /bin/busybox
+RUN rm -f /usr/bin/wget /bin/wget
 
 # Retain the runtime files and APK inventory for image scanners.
 # The package manager and its repository configuration stay in this stage.

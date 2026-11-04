@@ -11,6 +11,7 @@ RUN apk add --no-cache \
         ca-certificates \
         haproxy \
         tzdata \
+        utmps-libs \
         python3 \
         xxd \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
@@ -22,6 +23,7 @@ RUN apk add --no-cache \
         "openssl>=3.5.8-r0" \
         "libssl3>=3.5.8-r0" \
         "libcrypto3>=3.5.8-r0" \
+        "sqlite-libs>=3.54.1-r0" \
     && addgroup -g 4242 -S torctl \
     && addgroup haproxy torctl \
     && install -d -m 0755 /usr/local/bin /etc/haproxy \
@@ -32,6 +34,12 @@ COPY --chmod=0755 exit-ready-check.sh /usr/local/bin/exit_ready_check
 COPY --chmod=0755 render-haproxy-config.sh /usr/local/bin/render-haproxy-config
 COPY --chmod=0644 haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint-docker.sh
+
+RUN --mount=type=bind,from=shared,source=runtime,target=/run/python-security \
+    /bin/sh /run/python-security/patch-python.sh
+
+COPY --from=hardened_busybox /busybox /bin/busybox
+RUN rm -f /usr/bin/wget /bin/wget
 
 USER haproxy:haproxy
 ENTRYPOINT ["/usr/local/bin/entrypoint-docker.sh"]

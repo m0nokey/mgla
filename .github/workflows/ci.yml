@@ -309,11 +309,16 @@ jobs:
           DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
         run: bash bitcoin/bitcoin-cli.sh
 
-      - name: Verify wallet images contain no package manager
+      - name: Verify wallet and network runtime contents
         env:
           IMAGE_TAG: ${{ github.sha }}-${{ matrix.architecture }}
         run: |
           set -euo pipefail
+          for image in exit haproxy monero bitcoin; do
+            docker run --rm --network none --entrypoint /bin/sh \
+              "${IMAGE_REGISTRY}/mgla-${image}:${IMAGE_TAG}" -ec \
+              'applets="$(busybox --list)" && ! echo "$applets" | grep -qx wget && ! command -v sqlite3'
+          done
           for wallet in monero bitcoin; do
             docker run --rm --network none --entrypoint /bin/sh \
               "${IMAGE_REGISTRY}/mgla-${wallet}:${IMAGE_TAG}" -ec \
@@ -438,12 +443,39 @@ jobs:
         if: success()
         run: python3 shared/ci/security-summary.py
 
+      - name: Download Grype for verified VEX reports
+        id: grype_vex
+        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: false
+
+      - name: Verify VEX statements and scan images
+        env:
+          GRYPE: ${{ steps.grype_vex.outputs.cmd }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+          IMAGE_TAG: ${{ github.sha }}-${{ matrix.architecture }}
+        run: |
+          bash shared/ci/scan-images.sh "${GRYPE}" "${ARCHITECTURE}" "${IMAGE_TAG}" exit haproxy monero bitcoin
+          python3 shared/ci/security-summary.py grype-verified
+
+      - name: Upload raw Grype reports and VEX statements
+        if: ${{ always() && hashFiles('grype-audit/*.json') != '' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.1
+        with:
+          name: grype-audit-${{ matrix.architecture }}
+          path: |
+            grype-reports/*.sarif
+            grype-audit/*.json
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Stage security reports
         if: success()
         run: |
           set -euo pipefail
           mkdir -p security-reports
-          find grype-reports -maxdepth 1 -type f -name '*.sarif' -exec cp {} security-reports/ \;
+          find grype-verified -maxdepth 1 -type f -name '*.sarif' -exec cp {} security-reports/ \;
           test -n "$(find security-reports -maxdepth 1 -type f -name '*.sarif' -print -quit)"
 
       - name: Upload security report artifact
@@ -753,11 +785,38 @@ jobs:
         if: always()
         run: python3 shared/ci/security-summary.py
 
+      - name: Download Grype for verified VEX reports
+        id: grype_vex
+        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: false
+
+      - name: Verify VEX statements and rescan latest image
+        env:
+          GRYPE: ${{ steps.grype_vex.outputs.cmd }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+          IMAGE_NAME: ${{ matrix.image }}
+        run: |
+          bash shared/ci/scan-images.sh "${GRYPE}" "${ARCHITECTURE}" latest "${IMAGE_NAME}"
+          python3 shared/ci/security-summary.py grype-verified
+
+      - name: Upload latest raw Grype reports and VEX statements
+        if: ${{ always() && hashFiles('grype-audit/*.json') != '' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.1
+        with:
+          name: grype-audit-latest-${{ matrix.image }}-${{ matrix.architecture }}
+          path: |
+            grype-reports/*.sarif
+            grype-audit/*.json
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload latest Grype SARIF
-        if: ${{ always() && hashFiles(format('grype-reports/grype-{0}-{1}.sarif', matrix.image, matrix.architecture)) != '' }}
+        if: ${{ always() && hashFiles(format('grype-verified/grype-{0}-{1}.sarif', matrix.image, matrix.architecture)) != '' }}
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
-          sarif_file: grype-reports/grype-${{ matrix.image }}-${{ matrix.architecture }}.sarif
+          sarif_file: grype-verified/grype-${{ matrix.image }}-${{ matrix.architecture }}.sarif
           category: mgla-latest-grype-${{ matrix.image }}-${{ matrix.architecture }}
 
       - name: Fail on latest release blockers

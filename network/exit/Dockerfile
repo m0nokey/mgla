@@ -10,6 +10,7 @@ ENV LANG=C.UTF-8 \
 RUN apk add --no-cache \
         ca-certificates \
         tzdata \
+        utmps-libs \
         tor \
         nyx \
         xxd \
@@ -24,6 +25,7 @@ RUN apk add --no-cache \
         "openssl>=3.5.8-r0" \
         "libssl3>=3.5.8-r0" \
         "libcrypto3>=3.5.8-r0" \
+        "sqlite-libs>=3.54.1-r0" \
     && addgroup -g 4242 -S torctl \
     && addgroup tor torctl \
     && install -d -m 0755 /usr/local/bin /etc/tor \
@@ -34,6 +36,12 @@ COPY --chmod=0755 tor-control.py /usr/local/bin/tor-control
 COPY --chmod=0755 healthcheck.sh /usr/local/bin/healthcheck
 COPY --chmod=0644 torrc.template /etc/tor/torrc.template
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint-docker.sh
+
+RUN --mount=type=bind,from=shared,source=runtime,target=/run/python-security \
+    /bin/sh /run/python-security/patch-python.sh
+
+COPY --from=hardened_busybox /busybox /bin/busybox
+RUN rm -f /usr/bin/wget /bin/wget
 
 USER tor:torctl
 ENTRYPOINT ["/usr/local/bin/entrypoint-docker.sh"]
