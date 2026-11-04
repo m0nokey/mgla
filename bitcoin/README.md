@@ -7,7 +7,7 @@ blockchain.
 
 ## Layout
 
-- `Dockerfile` — signed, hash-pinned Electrum build on Alpine 3.24.
+- `Dockerfile` — signed, hash-pinned Electrum build with Python packaged in a scratch runtime.
 - `bitcoin-cli.sh` — lifecycle controller used by `run.sh` and CI.
 - `wallet-launcher.sh` — strict wallet UI and transaction validation.
 - wallet-view.py — read-only formatter for Electrum history, addresses, and UTXOs.

@@ -84,23 +84,7 @@ RUN set -Eeuo pipefail; \
     rm -f /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.*; \
     rm -rf /tmp/gnupg /tmp/electrum/ThomasV.asc
 
-FROM alpine:${ALPINE_VERSION}
-
-ARG ELECTRUM_VERSION=4.8.3
-ARG ELECTRUM_ARCHIVE_SHA256=df41fa82e579f720a3859bff9de09dd98bb93079b01fa2973b73fdbdbfde7288
-
-ENV HOME=/home/electrum \
-    ELECTRUMDIR=/home/electrum/.electrum \
-    PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    TZ=UTC
-
-LABEL org.opencontainers.image.title="mgla Bitcoin Electrum CLI" \
-      org.opencontainers.image.description="Official Electrum CLI on Alpine with Tor-only transport" \
-      org.opencontainers.image.source="https://github.com/spesmilo/electrum" \
-      org.opencontainers.image.version="${ELECTRUM_VERSION}" \
-      org.opencontainers.image.revision="${ELECTRUM_ARCHIVE_SHA256}"
+FROM alpine:${ALPINE_VERSION} AS runtime-files
 
 RUN apk upgrade --no-cache \
     && apk add --no-cache \
@@ -147,6 +131,32 @@ RUN command -v curl \
     && ldd /opt/bitcoin/mgla-vault \
     && if ldd /opt/bitcoin/mgla-vault | grep -q 'not found'; then exit 1; fi \
     && chown -R 1000:1000 /home/electrum /bitcoin /opt/venv /opt/app /opt/bitcoin
+
+# Retain the runtime files and APK inventory for image scanners.
+# The package manager and its repository configuration stay in this stage.
+RUN mkdir /runtime \
+    && cp -a /bin /etc /lib /opt /usr /bitcoin /home /tmp /runtime/ \
+    && rm -rf /runtime/etc/apk /runtime/usr/share/apk \
+    && rm -f /runtime/bin/apk /runtime/usr/bin/apk
+
+FROM scratch
+COPY --from=runtime-files /runtime/ /
+
+ARG ELECTRUM_VERSION=4.8.3
+ARG ELECTRUM_ARCHIVE_SHA256=df41fa82e579f720a3859bff9de09dd98bb93079b01fa2973b73fdbdbfde7288
+
+ENV HOME=/home/electrum \
+    ELECTRUMDIR=/home/electrum/.electrum \
+    PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC
+
+LABEL org.opencontainers.image.title="mgla Bitcoin Electrum CLI" \
+      org.opencontainers.image.description="Official Electrum CLI with Tor-only transport" \
+      org.opencontainers.image.source="https://github.com/spesmilo/electrum" \
+      org.opencontainers.image.version="${ELECTRUM_VERSION}" \
+      org.opencontainers.image.revision="${ELECTRUM_ARCHIVE_SHA256}"
 
 USER 1000:1000
 WORKDIR /opt/app
