@@ -65,11 +65,13 @@ RUN set -eux; \
 FROM alpine:${ALPINE_VERSION} AS runtime-files
 
 # Shell tools support the existing launcher, curl handles SOCKS requests,
-# and the vault uses Alpine's musl and OpenSSL runtime.
+# and the vault needs musl, OpenSSL, libsodium, and libgcc at runtime.
 RUN apk add --no-cache \
         bash \
         ca-certificates \
         curl \
+        libgcc \
+        libsodium \
         openssl \
         tzdata \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
