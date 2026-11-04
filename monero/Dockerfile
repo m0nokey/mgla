@@ -45,13 +45,16 @@ PYTHON
 RUN set -eux; \
     case "${TARGETARCH}" in \
         amd64) host=x86_64-linux-gnu ;; \
-        arm64) host=aarch64-linux-gnu ;; \
+        arm64) \
+            host=aarch64-linux-gnu; \
+            ln -s /usr/bin/gcc-13 "/usr/local/bin/${host}-gcc"; \
+            ln -s /usr/bin/g++-13 "/usr/local/bin/${host}-g++"; \
+            ;; \
         *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    make -C contrib/depends HOST="${host}" GITIAN=1 \
-        host_CC=/usr/bin/gcc-13 host_CXX=/usr/bin/g++-13 -j"${BUILD_JOBS}" || { \
+    make -C contrib/depends HOST="${host}" GITIAN=1 -j"${BUILD_JOBS}" || { \
         status=$?; \
-        find contrib/depends/work/build -name config.log -exec tail -n 80 {} +; \
+        find contrib/depends/work/build -name config.log -exec cat {} +; \
         exit "${status}"; \
     }; \
     cmake -S . -B build/release \
