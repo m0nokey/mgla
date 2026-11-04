@@ -24,6 +24,7 @@ RUN apk add --no-cache \
         "openssl>=3.5.8-r0" \
         "libssl3>=3.5.8-r0" \
         "libcrypto3>=3.5.8-r0" \
+        "sqlite-libs>=3.54.1-r0" \
     && addgroup -g 4242 -S torctl \
     && addgroup tor torctl \
     && install -d -m 0755 /usr/local/bin /etc/tor \
