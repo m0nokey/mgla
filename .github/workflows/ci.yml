@@ -166,20 +166,28 @@ jobs:
         working-directory: shared/vault
         run: cargo audit
 
-      - name: Install latest stable Trivy
-        id: setup_trivy
-        continue-on-error: true
-        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
-        with:
-          version: latest
-          cache: false
+      - name: Install latest stable Trivy from GitHub Releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          cd "${tmp_dir}"
 
-      - name: Retry Trivy installation
-        if: steps.setup_trivy.outcome == 'failure'
-        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
-        with:
-          version: latest
-          cache: false
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --connect-timeout 10 --max-time 120 \
+            https://api.github.com/repos/aquasecurity/trivy/releases/latest -o release.json
+          version="$(jq -er '.tag_name | select(test("^v[0-9]+[.][0-9]+[.][0-9]+$"))' release.json)"
+          asset="trivy_${version#v}_Linux-64bit.tar.gz"
+          digest="$(jq -er --arg asset "${asset}" \
+            '.assets[] | select(.name == $asset) | .digest | select(test("^sha256:[a-f0-9]{64}$"))' release.json)"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --connect-timeout 10 --max-time 120 \
+            "https://github.com/aquasecurity/trivy/releases/download/${version}/${asset}" -o "${asset}"
+          printf '%s  %s\n' "${digest#sha256:}" "${asset}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/trivy-bin"
+          tar -xzf "${asset}" -C "${RUNNER_TEMP}/trivy-bin" trivy
+          printf '%s\n' "${RUNNER_TEMP}/trivy-bin" >> "${GITHUB_PATH}"
 
       - name: Scan Docker and Compose configuration
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
