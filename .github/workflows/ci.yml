@@ -309,11 +309,16 @@ jobs:
           DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
         run: bash bitcoin/bitcoin-cli.sh
 
-      - name: Verify wallet images contain no package manager
+      - name: Verify wallet and network runtime contents
         env:
           IMAGE_TAG: ${{ github.sha }}-${{ matrix.architecture }}
         run: |
           set -euo pipefail
+          for image in exit haproxy monero bitcoin; do
+            docker run --rm --network none --entrypoint /bin/sh \
+              "${IMAGE_REGISTRY}/mgla-${image}:${IMAGE_TAG}" -ec \
+              'applets="$(busybox --list)" && ! echo "$applets" | grep -qx wget && ! command -v sqlite3'
+          done
           for wallet in monero bitcoin; do
             docker run --rm --network none --entrypoint /bin/sh \
               "${IMAGE_REGISTRY}/mgla-${wallet}:${IMAGE_TAG}" -ec \

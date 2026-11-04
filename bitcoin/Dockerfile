@@ -133,6 +133,12 @@ RUN command -v curl \
     && if ldd /opt/bitcoin/mgla-vault | grep -q 'not found'; then exit 1; fi \
     && chown -R 1000:1000 /home/electrum /bitcoin /opt/venv /opt/app /opt/bitcoin
 
+RUN --mount=type=bind,from=shared,source=runtime,target=/run/python-security \
+    /bin/sh /run/python-security/patch-python.sh
+
+COPY --from=hardened_busybox /busybox /bin/busybox
+RUN rm -f /usr/bin/wget /bin/wget
+
 # Retain the runtime files and APK inventory for image scanners.
 # The package manager and its repository configuration stay in this stage.
 RUN mkdir /runtime \

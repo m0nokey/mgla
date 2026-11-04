@@ -1,0 +1,13 @@
+diff --git a/Lib/poplib.py b/Lib/poplib.py
+index 4469bff44b4c455..b97274c5c32ee63 100644
+--- a/Lib/poplib.py
++++ b/Lib/poplib.py
+@@ -122,6 +122,8 @@ def _putline(self, line):
+     def _putcmd(self, line):
+         if self._debugging: print('*cmd*', repr(line))
+         line = bytes(line, self.encoding)
++        if re.search(b'[\x00-\x1F\x7F]', line):
++            raise ValueError('Control characters not allowed in commands')
+         self._putline(line)
+ 
+ 

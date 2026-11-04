@@ -34,5 +34,11 @@ COPY --chmod=0755 render-haproxy-config.sh /usr/local/bin/render-haproxy-config
 COPY --chmod=0644 haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint-docker.sh
 
+RUN --mount=type=bind,from=shared,source=runtime,target=/run/python-security \
+    /bin/sh /run/python-security/patch-python.sh
+
+COPY --from=hardened_busybox /busybox /bin/busybox
+RUN rm -f /usr/bin/wget /bin/wget
+
 USER haproxy:haproxy
 ENTRYPOINT ["/usr/local/bin/entrypoint-docker.sh"]
