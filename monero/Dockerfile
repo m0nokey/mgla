@@ -48,7 +48,12 @@ RUN set -eux; \
         arm64) host=aarch64-linux-gnu ;; \
         *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    make -C contrib/depends HOST="${host}" GITIAN=1 -j"${BUILD_JOBS}"; \
+    make -C contrib/depends HOST="${host}" GITIAN=1 \
+        host_CC=/usr/bin/gcc-13 host_CXX=/usr/bin/g++-13 -j"${BUILD_JOBS}" || { \
+        status=$?; \
+        find contrib/depends/work/build -name config.log -exec tail -n 80 {} +; \
+        exit "${status}"; \
+    }; \
     cmake -S . -B build/release \
         -D CMAKE_TOOLCHAIN_FILE="/src/monero/contrib/depends/${host}/share/toolchain.cmake" \
         -D CMAKE_EXE_LINKER_FLAGS=-static \
