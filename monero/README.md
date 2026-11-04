@@ -6,7 +6,7 @@ interactive wallet and vault logic in this directory.
 
 ## Layout
 
-- `Dockerfile` — multi-stage Alpine 3.24 source build of `monero-wallet-cli`.
+- `Dockerfile` — static source build of `monero-wallet-cli` with a scratch runtime.
 - `monero-cli.sh` — lifecycle controller used by `run.sh` and CI.
 - `wallet-launcher.sh` — wallet menu and vault session UI copied into the image.
 - `../network/exit` — shared hardened Tor exit image.
@@ -98,26 +98,12 @@ or cache.
 
 CI builds both supported architectures and verifies:
 
-- the pinned Monero source revision and Alpine runtime links;
+- the pinned Monero source revision and static wallet linkage;
 - the shared Rust vault tests, formatting, Clippy, and advisory audit;
 - direct-route blocking and Tor SOCKS5h connectivity;
 - OSV and CodeQL dependency/source checks;
-- Trivy and Grype OS and library findings for exit, HAProxy, and Monero images.
+- Grype OS and library findings for exit, HAProxy, and Monero images.
 
 The release policy blocks fixable `MEDIUM`, `HIGH`, and `CRITICAL` findings. See
 the [latest CI workflow](https://github.com/m0nokey/mgla/actions/workflows/ci.yml)
 for the Summary table and SARIF reports.
-
-## Experimental scratch build
-
-From the repository root, build and start the standalone wallet binary:
-
-```sh
-docker buildx build --load -f monero/Dockerfile.scratch \
-  -t mgla-monero:scratch-smoke monero
-docker run --rm --network none mgla-monero:scratch-smoke
-```
-
-This target checks static linkage and starts the wallet with `--version`.
-Use the Compose profile for wallet sessions with Tor and encrypted vaults.
-CI runs the scratch smoke test on Linux amd64 and arm64.

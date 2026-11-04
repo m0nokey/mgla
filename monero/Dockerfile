@@ -2,135 +2,76 @@
 
 ARG ALPINE_VERSION=3.24
 
-FROM alpine:${ALPINE_VERSION} AS builder
-
-ENV LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    TZ=UTC
-
+FROM ubuntu:24.04 AS builder
 ARG TARGETARCH
 ARG MONERO_VERSION=v0.18.5.1
 ARG MONERO_COMMIT=4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5
+ARG BUILD_JOBS=2
 
-# Follow Alpine's official Monero APKBUILD dependency model. All compiler and
-# development packages remain in this disposable stage.
-RUN apk add --no-cache \
-        boost-dev \
-        build-base \
-        bash \
-        ca-certificates \
-        cargo \
-        ccache \
-        cmake \
-        cppzmq \
-        file \
-        git \
-        hidapi-dev \
-        libsodium-dev \
-        linux-headers \
-        miniupnpc-dev \
-        openssl-dev \
-        pkgconf \
-        rapidjson-dev \
-        readline-dev \
-        rust \
-        samurai \
-        tzdata \
-        unbound-dev \
-        zeromq-dev \
-    && cp /usr/share/zoneinfo/UTC /etc/localtime \
-    && printf '%s\n' UTC > /etc/timezone \
-    && apk add --no-cache \
-        --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
-        "expat>=2.8.4-r0" \
-        "expat-dev>=2.8.4-r0" \
-        "libexpat>=2.8.4-r0" \
-        "openssl>=3.5.8-r0" \
-        "openssl-dev>=3.5.8-r0" \
-        "libssl3>=3.5.8-r0" \
-        "libcrypto3>=3.5.8-r0"
-
-WORKDIR /src
-
-# Clone the exact release commit, including the submodule revisions recorded by
-# that commit. The tag is not accepted unless it resolves to the pinned hash.
-RUN set -eux; \
-    git clone --recursive --depth 1 --shallow-submodules --branch "${MONERO_VERSION}" \
-        https://github.com/monero-project/monero.git /src/monero; \
-    test "$(git -C /src/monero rev-parse HEAD)" = "${MONERO_COMMIT}"
-
-ENV CCACHE_DIR=/ccache
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        automake autotools-dev build-essential ca-certificates cmake curl \
+        git gperf libtool pkg-config python3 xz-utils \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src/monero
+RUN git clone --recursive --depth 1 --shallow-submodules --branch "${MONERO_VERSION}" \
+        https://github.com/monero-project/monero.git . \
+    && test "$(git rev-parse HEAD)" = "${MONERO_COMMIT}"
 
-# Alpine's official package builds Monero directly against maintained Alpine
-# libraries. Build only simplewallet; daemon, RPC, GUI, tests, and debug tools
-# are not requested.
-RUN --mount=type=cache,target=/ccache \
-    set -eux; \
-    case "${TARGETARCH:-amd64}" in \
-        amd64) expected_arch="x86-64" ;; \
-        arm64) expected_arch="ARM aarch64" ;; \
-        *) echo "unsupported Docker architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+# Boost 1.69 treats PTHREAD_STACK_MIN as a preprocessor constant.
+# Apply boostorg/thread#297 during the depends preprocessing step.
+RUN python3 - <<'PYTHON'
+from pathlib import Path
+
+recipe = Path("contrib/depends/packages/boost.mk")
+marker = "define $(package)_preprocess_cmds\n"
+source = recipe.read_text()
+assert source.count(marker) == 1
+fix = (
+    '  sed -i "s/^#if PTHREAD_STACK_MIN > 0/#ifdef PTHREAD_STACK_MIN/" '
+    'boost/thread/pthread/thread_data.hpp &&' + chr(92) + "\n"
+)
+recipe.write_text(source.replace(marker, marker + fix))
+PYTHON
+
+# Use Monero's pinned static dependency builds for the selected Linux target.
+# GITIAN=1 skips the optional legacy ccache build.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+        amd64) host=x86_64-linux-gnu ;; \
+        arm64) host=aarch64-linux-gnu ;; \
+        *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    cmake -S . -B build/release -G Ninja \
-        -D CMAKE_BUILD_TYPE=Release \
-        -D CMAKE_C_COMPILER_LAUNCHER=ccache \
-        -D CMAKE_CXX_COMPILER_LAUNCHER=ccache \
-        -D STATIC=OFF \
-        -D BUILD_64=ON \
+    make -C contrib/depends HOST="${host}" GITIAN=1 -j"${BUILD_JOBS}"; \
+    cmake -S . -B build/release \
+        -D CMAKE_TOOLCHAIN_FILE="/src/monero/contrib/depends/${host}/share/toolchain.cmake" \
+        -D CMAKE_EXE_LINKER_FLAGS=-static \
         -D BUILD_TESTS=OFF \
         -D BUILD_DOCUMENTATION=OFF \
         -D BUILD_DEBUG_UTILITIES=OFF \
         -D USE_DEVICE_TREZOR=OFF \
-        -D USE_READLINE=ON \
-        -D STACK_TRACE=OFF \
-        -D ARCH=default; \
-    cmake --build build/release --target simplewallet --parallel "$(nproc)"; \
-    strip --strip-unneeded build/release/bin/monero-wallet-cli; \
-    test -x build/release/bin/monero-wallet-cli; \
-    file build/release/bin/monero-wallet-cli | grep -F "${expected_arch}"; \
-    ldd build/release/bin/monero-wallet-cli; \
-    if ldd build/release/bin/monero-wallet-cli | grep -q 'not found'; then exit 1; fi; \
-    ccache --show-stats
+        -D STACK_TRACE=OFF; \
+    cmake --build build/release --target simplewallet --parallel "${BUILD_JOBS}"; \
+    wallet=build/release/bin/monero-wallet-cli; \
+    strip --strip-unneeded "${wallet}"; \
+    readelf -lW "${wallet}" > /tmp/wallet-program-headers; \
+    readelf -dW "${wallet}" > /tmp/wallet-dynamic-section; \
+    if grep -qw INTERP /tmp/wallet-program-headers \
+        || grep -qw NEEDED /tmp/wallet-dynamic-section; then \
+        echo "Expected a statically linked wallet binary" >&2; exit 1; \
+    fi
 
-FROM alpine:${ALPINE_VERSION}
+FROM alpine:${ALPINE_VERSION} AS runtime-files
 
-ENV HOME=/tmp/home \
-    LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    TZ=UTC
-
-ARG MONERO_VERSION=v0.18.5.1
-ARG MONERO_COMMIT=4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5
-
-LABEL org.opencontainers.image.title="mgla Monero wallet" \
-      org.opencontainers.image.description="Source-built Monero CLI wallet with an onion-only transport" \
-      org.opencontainers.image.source="https://github.com/monero-project/monero" \
-      org.opencontainers.image.version="${MONERO_VERSION}" \
-      org.opencontainers.image.revision="${MONERO_COMMIT}"
-
-# Keep the final image limited to runtime packages, the pinned security
-# revisions, and the directories required by the non-root wallet process.
+# Shell tools support the existing launcher, curl handles SOCKS requests,
+# and the vault uses Alpine's musl and OpenSSL runtime.
 RUN apk add --no-cache \
         bash \
-        boost-chrono \
-        boost-filesystem \
-        boost-locale \
-        boost-program_options \
-        boost-serialization \
-        boost-thread \
         ca-certificates \
         curl \
-        hidapi \
-        libgcc \
-        libsodium \
-        libstdc++ \
-        miniupnpc \
         openssl \
-        readline \
         tzdata \
-        zeromq \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
     && printf '%s\n' UTC > /etc/timezone \
     && command -v stty \
@@ -142,7 +83,6 @@ RUN apk add --no-cache \
         "libssl3>=3.5.8-r0" \
         "libcrypto3>=3.5.8-r0" \
         "nghttp2-libs>=1.70.0-r0" \
-        "unbound-libs>=1.26.1-r0" \
     && addgroup -g 1000 -S user \
     && adduser -S -D -H -u 1000 -G user -s /sbin/nologin user \
     && install -d -m 0755 -o root -g root /opt/app /opt/monero \
@@ -159,6 +99,30 @@ RUN chmod 0755 /opt/app/monero /opt/monero/monero-wallet-cli /opt/monero/mgla-va
     && /opt/monero/monero-wallet-cli --version \
     && ldd /opt/monero/mgla-vault \
     && if ldd /opt/monero/mgla-vault | grep -q 'not found'; then exit 1; fi
+
+# Retain the runtime files and APK inventory for image scanners.
+# The package manager and its repository configuration stay in this stage.
+RUN mkdir /runtime \
+    && cp -a /bin /etc /lib /opt /usr /monero /tmp /runtime/ \
+    && rm -rf /runtime/etc/apk /runtime/usr/share/apk \
+    && rm -f /runtime/bin/apk /runtime/usr/bin/apk
+
+FROM scratch
+COPY --from=runtime-files /runtime/ /
+
+ENV HOME=/tmp/home \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC
+
+ARG MONERO_VERSION=v0.18.5.1
+ARG MONERO_COMMIT=4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5
+
+LABEL org.opencontainers.image.title="mgla Monero wallet" \
+      org.opencontainers.image.description="Source-built Monero CLI wallet with an onion-only transport" \
+      org.opencontainers.image.source="https://github.com/monero-project/monero" \
+      org.opencontainers.image.version="${MONERO_VERSION}" \
+      org.opencontainers.image.revision="${MONERO_COMMIT}"
 
 USER 1000:1000
 WORKDIR /opt/app
