@@ -140,15 +140,14 @@ COPY --from=hardened_busybox /busybox /bin/busybox
 RUN --mount=type=bind,from=shared,source=runtime,target=/run/runtime-config \
     /bin/sh /run/runtime-config/prune-busybox-links.sh
 
-# Retain the runtime files and APK inventory for image scanners.
-# The package manager and its repository configuration stay in this stage.
-RUN mkdir /runtime \
-    && cp -a /bin /etc /lib /opt /usr /monero /tmp /runtime/ \
-    && rm -rf /runtime/etc/apk /runtime/usr/share/apk \
-    && rm -f /runtime/bin/apk /runtime/usr/bin/apk
+FROM alpine:${ALPINE_VERSION} AS assemble
+RUN apk add --no-cache lddtreepax
+COPY --from=runtime-files / /source/
+RUN --mount=type=bind,from=shared,source=runtime,target=/run/runtime-config \
+    python3 /run/runtime-config/stage-runtime.py monero
 
 FROM scratch
-COPY --from=runtime-files /runtime/ /
+COPY --from=assemble /runtime/ /
 
 ENV HOME=/tmp/home \
     LANG=C.UTF-8 \

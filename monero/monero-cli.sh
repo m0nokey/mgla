@@ -393,6 +393,11 @@ echo "${monero_version}" | head -n 1
 echo "[ok] Tor + HAProxy + Monero test passed"
 if [[ "${CI:-0}" == "1" || "${SKIP_WALLET_MENU:-0}" == "1" ]]; then
     if [[ "${CI:-0}" == "1" ]]; then
+        monitor_container="${exit_a_container}"
+        [[ "${winner}" == exit_a ]] || monitor_container="${exit_b_container}"
+        docker exec "${monitor_container}" nyx --version
+        docker exec -i "${monitor_container}" /usr/bin/python3 - \
+            < "${module_dir}/../network/exit/ci-monitor-test.py"
         docker exec -i "${monero_container}" /bin/bash -s < "${module_dir}/ci-wallet-state-test.sh"
     fi
     echo "[info] CI mode enabled; wallet menu skipped"
