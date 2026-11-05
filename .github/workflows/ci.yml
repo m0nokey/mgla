@@ -73,7 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t shell_files < <(
-            find bitcoin monero network shared/lib shared/vault -type f -name '*.sh' -print
+            find bitcoin monero network shared/lib shared/vault shared/runtime -type f -name '*.sh' -print
             printf '%s\n' run.sh
           )
           test "${#shell_files[@]}" -gt 0
@@ -148,7 +148,7 @@ jobs:
           docker compose --ansi never --profile bitcoin --profile vault -f compose.yaml config --quiet
 
       - name: Compile Python helpers
-        run: python3 -m py_compile shared/ci/security-summary.py bitcoin/network-check.py
+        run: python3 -m py_compile shared/ci/security-summary.py bitcoin/network-check.py bitcoin/prune-runtime.py shared/runtime/minimize-busybox.py
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path shared/vault/Cargo.toml -- --check
@@ -317,13 +317,39 @@ jobs:
           for image in exit haproxy monero bitcoin; do
             docker run --rm --network none --entrypoint /bin/sh \
               "${IMAGE_REGISTRY}/mgla-${image}:${IMAGE_TAG}" -ec \
-              'applets="$(busybox --list)" && ! echo "$applets" | grep -qx wget && ! command -v sqlite3'
+              'set -eu
+               applets="$(busybox --list)"
+               for command in wget nc telnet httpd ftpd tftp; do
+                 if printf "%s\n" "$applets" | grep -qx "$command"; then
+                   echo "Unexpected BusyBox applet: $command" >&2; exit 1
+                 fi
+               done
+               for command in sqlite3 openssl; do
+                 if command -v "$command"; then
+                   echo "Unexpected runtime command: $command" >&2; exit 1
+                 fi
+               done
+               test -f /usr/share/zoneinfo/UTC
+               test "$(find /usr/share/zoneinfo -type f | wc -l)" -eq 1
+               test "$(cat /etc/timezone)" = UTC'
           done
           for wallet in monero bitcoin; do
             docker run --rm --network none --entrypoint /bin/sh \
               "${IMAGE_REGISTRY}/mgla-${wallet}:${IMAGE_TAG}" -ec \
               'test "$(id -u)" = 1000 && ! command -v apk'
           done
+          docker run --rm --network none --entrypoint /opt/venv/bin/python \
+            "${IMAGE_REGISTRY}/mgla-bitcoin:${IMAGE_TAG}" -c '
+          import json
+          from pathlib import Path
+          import electrum
+          root = Path(electrum.__file__).parent
+          assert not (root / "gui/qt").exists()
+          assert not (root / "gui/qml").exists()
+          for manifest in (root / "plugins").glob("*/manifest.json"):
+              keystore = json.loads(manifest.read_text()).get("registers_keystore", [])
+              assert not keystore or keystore[0] != "hardware", manifest
+          print("Electrum software-wallet runtime verified")'
 
       - name: Prepare security report directory
         run: mkdir -p grype-reports security-reports

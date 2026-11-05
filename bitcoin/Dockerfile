@@ -47,6 +47,7 @@ RUN apk upgrade --no-cache \
 
 WORKDIR /tmp/electrum
 COPY requirements.lock /tmp/electrum/requirements.lock
+COPY prune-runtime.py /tmp/electrum/prune-runtime.py
 
 RUN set -Eeuo pipefail; \
     archive="Electrum-${ELECTRUM_VERSION}.tar.gz"; \
@@ -76,6 +77,7 @@ RUN set -Eeuo pipefail; \
     /opt/venv/bin/python -m pip install --no-compile --no-deps --no-build-isolation \
         --require-hashes -r /tmp/electrum/requirements.lock; \
     /opt/venv/bin/python -m pip install --no-compile --no-deps "${PWD}/${archive}"; \
+    /opt/venv/bin/python /tmp/electrum/prune-runtime.py; \
     /opt/venv/bin/electrum --offline --version; \
     site_packages="$(/opt/venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"; \
     rm -rf "${site_packages}/pip" "${site_packages}"/pip-*.dist-info \
@@ -95,13 +97,17 @@ RUN apk upgrade --no-cache \
         libsecp256k1 \
         libsodium \
         libstdc++ \
-        openssl \
-        utmps-libs \
+        libssl3 \
+        libcrypto3 \
         py3-cffi \
         python3 \
         tzdata \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
     && printf '%s\n' UTC > /etc/timezone \
+    && cp /usr/share/zoneinfo/UTC /tmp/mgla-UTC \
+    && apk del tzdata \
+    && install -d /usr/share/zoneinfo \
+    && mv /tmp/mgla-UTC /usr/share/zoneinfo/UTC \
     && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
         "nghttp2-libs>=1.70.0-r0" \
@@ -138,7 +144,8 @@ RUN --mount=type=bind,from=shared,source=runtime,target=/run/python-security \
     /bin/sh /run/python-security/patch-python.sh
 
 COPY --from=hardened_busybox /busybox /bin/busybox
-RUN rm -f /usr/bin/wget /bin/wget
+RUN --mount=type=bind,from=shared,source=runtime,target=/run/runtime-config \
+    /bin/sh /run/runtime-config/prune-busybox-links.sh
 
 # Retain the runtime files and APK inventory for image scanners.
 # The package manager and its repository configuration stay in this stage.

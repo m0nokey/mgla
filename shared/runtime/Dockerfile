@@ -3,11 +3,12 @@
 ARG ALPINE_VERSION=3.24
 FROM alpine:${ALPINE_VERSION} AS builder
 
-# Use the Alpine package's build configuration and patch set. Disable the
-# unused wget applet to remove CVE-2025-60876 without changing the other applets.
+# Keep Alpine's patches and command options while selecting only runtime applets.
 ARG APORTS_COMMIT=35f5eb2864e50dd4448758d31f3e2a32f733ab84
 RUN apk add --no-cache build-base bzip2 ca-certificates curl git linux-headers \
-        openssl-dev patch pkgconf utmps-dev utmps-static
+        openssl-dev patch python3
+
+COPY runtime/minimize-busybox.py runtime/busybox-applets.txt /build-config/
 
 WORKDIR /src
 RUN set -eux; \
@@ -28,15 +29,15 @@ RUN set -eux; \
     done; \
     cp busyboxconfig "busybox-${pkgver}/.config"; \
     cd "busybox-${pkgver}"; \
-    grep -qx CONFIG_WGET=y .config; \
-    sed -i 's/^CONFIG_WGET=y$/# CONFIG_WGET is not set/' .config; \
+    python3 /build-config/minimize-busybox.py /build-config/busybox-applets.txt; \
     make silentoldconfig; \
-    make -j2 CONFIG_EXTRA_CFLAGS="$(pkg-config --cflags --static libutmps)" \
-        CONFIG_EXTRA_LDLIBS="$(pkg-config --libs --static libutmps)"; \
+    make -j2; \
     install -D -m 0755 busybox /out/busybox; \
     /out/busybox --list > /tmp/applets; \
     grep -qx sh /tmp/applets; \
-    ! grep -qx wget /tmp/applets
+    sort /tmp/applets > /tmp/actual-applets; \
+    sort /build-config/busybox-applets.txt > /tmp/expected-applets; \
+    diff -u /tmp/expected-applets /tmp/actual-applets
 
 FROM scratch
 COPY --from=builder /out/busybox /busybox

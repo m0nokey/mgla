@@ -238,8 +238,8 @@ cleanup() {
 
 trap cleanup EXIT
 
-ci_vault_password="$(openssl rand -hex 32)"
-ci_wallet_password="$(openssl rand -hex 32)"
+ci_vault_password="$(/opt/venv/bin/python -c 'import secrets; print(secrets.token_hex(32))')"
+ci_wallet_password="$(/opt/venv/bin/python -c 'import secrets; print(secrets.token_hex(32))')"
 rm -f -- "${CI_VAULT_FILE}"
 ci_clear_root 'initial'
 ensure_wallet_root

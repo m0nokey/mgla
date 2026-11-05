@@ -130,6 +130,14 @@ vault binary, launcher tools, and the libraries and data they need at runtime.
 Compilers, package managers, signing tools, and build caches stay in the
 build stages.
 
+Wallet runtimes support software wallets only: Monero is compiled without
+Trezor, Ledger, HIDAPI, USB, or udev dependencies, and Electrum's hardware
+plugins and GUI files are removed. Runtime tools use an explicit BusyBox
+applet list, retain only the UTC timezone, and include OpenSSL libraries
+without the OpenSSL command-line program. CI checks these contents and
+creates, saves, and reopens disposable wallets through the encrypted vault
+on both architectures, alongside the Tor isolation tests.
+
 The vault is not a runtime helper container and does not create a block device.
 Only encrypted `.mgla` vault files remain on the host; the decrypted shared
 vault exists only in the wallet container tmpfs.

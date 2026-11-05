@@ -38,6 +38,18 @@ fix = (
     'boost/thread/pthread/thread_data.hpp &&' + chr(92) + "\n"
 )
 recipe.write_text(source.replace(marker, marker + fix))
+
+packages = Path("contrib/depends/packages/packages.mk")
+source = packages.read_text()
+for old, new in (
+    ("hardware_packages := hidapi protobuf libusb", "hardware_packages :="),
+    ("hardware_native_packages := native_protobuf", "hardware_native_packages :="),
+    ("linux_packages = eudev ncurses readline sodium $(hardware_packages)",
+     "linux_packages = ncurses readline sodium"),
+):
+    assert source.count(old) == 1
+    source = source.replace(old, new)
+packages.write_text(source)
 PYTHON
 
 # Use Monero's pinned static dependency builds for the selected Linux target.
@@ -64,7 +76,12 @@ RUN set -eux; \
         -D BUILD_DOCUMENTATION=OFF \
         -D BUILD_DEBUG_UTILITIES=OFF \
         -D USE_DEVICE_TREZOR=OFF \
+        -D CMAKE_DISABLE_FIND_PACKAGE_HIDAPI=ON \
+        -D CMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -D STACK_TRACE=OFF; \
+    if grep -Eq 'device_ledger[.]cpp|device_io_hid[.]cpp|/device_trezor/trezor/' build/release/compile_commands.json; then \
+        echo "Hardware wallet code is still enabled" >&2; exit 1; \
+    fi; \
     cmake --build build/release --target simplewallet --parallel "${BUILD_JOBS}"; \
     wallet=build/release/bin/monero-wallet-cli; \
     strip --strip-unneeded "${wallet}"; \
@@ -85,17 +102,20 @@ RUN apk add --no-cache \
         curl \
         libgcc \
         libsodium \
-        openssl \
-        utmps-libs \
+        libssl3 \
+        libcrypto3 \
         tzdata \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
     && printf '%s\n' UTC > /etc/timezone \
+    && cp /usr/share/zoneinfo/UTC /tmp/mgla-UTC \
+    && apk del tzdata \
+    && install -d /usr/share/zoneinfo \
+    && mv /tmp/mgla-UTC /usr/share/zoneinfo/UTC \
     && command -v stty \
     && apk add --no-cache \
         --repository https://dl-cdn.alpinelinux.org/alpine/edge/main \
         "expat>=2.8.4-r0" \
         "libexpat>=2.8.4-r0" \
-        "openssl>=3.5.8-r0" \
         "libssl3>=3.5.8-r0" \
         "libcrypto3>=3.5.8-r0" \
         "nghttp2-libs>=1.70.0-r0" \
@@ -117,7 +137,8 @@ RUN chmod 0755 /opt/app/monero /opt/monero/monero-wallet-cli /opt/monero/mgla-va
     && if ldd /opt/monero/mgla-vault | grep -q 'not found'; then exit 1; fi
 
 COPY --from=hardened_busybox /busybox /bin/busybox
-RUN rm -f /usr/bin/wget /bin/wget
+RUN --mount=type=bind,from=shared,source=runtime,target=/run/runtime-config \
+    /bin/sh /run/runtime-config/prune-busybox-links.sh
 
 # Retain the runtime files and APK inventory for image scanners.
 # The package manager and its repository configuration stay in this stage.
