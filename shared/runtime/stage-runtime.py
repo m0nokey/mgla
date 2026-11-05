@@ -152,6 +152,19 @@ class RuntimeTree:
         root = str(self.source) + "/"
         search = scanner["LoadLdpaths"](root)
         search["env"] = []  # Never resolve against the assembler's environment.
+        # A shared object has no PT_INTERP from which lddtree can infer these.
+        # Read musl's own configuration, or use its documented default paths.
+        musl_paths = list(self.source.glob("etc/ld-musl-*.path"))
+        if len(musl_paths) > 1:
+            raise RuntimeError(f"Ambiguous musl search path: {musl_paths}")
+        directories = (musl_paths[0].read_text().replace("\n", ":").split(":")
+                       if musl_paths else ["/lib", "/usr/local/lib", "/usr/lib"])
+        for directory in directories:
+            directory = directory.strip()
+            if directory and not directory.startswith("#"):
+                if not directory.startswith("/"):
+                    raise RuntimeError(f"Relative musl library path: {directory}")
+                search["conf"].append(str(self.source_path(directory)))
         while self.elfs:
             path = self.elfs.popleft()
             result = scanner["ParseELF"](str(self.source_path(path)), root=root, ldpaths=search)
