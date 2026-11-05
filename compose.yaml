@@ -24,6 +24,15 @@ services:
       args:
         ALPINE_VERSION: "${alpine_version:-3.24}"
 
+  # Build-only Python ABI artifact shared by the Python runtime images.
+  runtime-python-socket:
+    profiles: ["vault"]
+    build:
+      context: ./shared
+      dockerfile: runtime/Dockerfile.python-socket
+      args:
+        ALPINE_VERSION: "${alpine_version:-3.24}"
+
   exit_a:
     container_name: ${exit_a_container:-mgla-exit-a}
     image: ${exit_image:-mgla-exit:latest}
@@ -35,6 +44,7 @@ services:
       additional_contexts:
         shared: ./shared
         hardened_busybox: service:runtime-busybox
+        hardened_python_socket: service:runtime-python-socket
     init: true
     stop_signal: SIGTERM
     stop_grace_period: 5s
@@ -109,6 +119,7 @@ services:
       additional_contexts:
         shared: ./shared
         hardened_busybox: service:runtime-busybox
+        hardened_python_socket: service:runtime-python-socket
     init: true
     stop_signal: SIGTERM
     stop_grace_period: 2s
@@ -203,6 +214,7 @@ services:
         shared: ./shared
         vault: service:vault
         hardened_busybox: service:runtime-busybox
+        hardened_python_socket: service:runtime-python-socket
       args:
         ALPINE_VERSION: "${alpine_version:-3.24}"
         ELECTRUM_VERSION: "${electrum_version:-4.8.3}"

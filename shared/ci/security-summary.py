@@ -117,7 +117,9 @@ def main():
             "",
             (
                 "This table applies verified VEX statements. See the Grype audit artifact "
-                "for the original reports and the statements applied to these images."
+                "for the original reports and the statements applied to these images. "
+                "All remaining MEDIUM, HIGH, and CRITICAL findings block publication, "
+                "including findings without a known fixed version."
                 if verified else
                 "Grype reports all available findings, including vulnerabilities "
                 "without a known fix. Separate blocker scans fail on fixable MEDIUM, "

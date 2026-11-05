@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1.7
+ARG ALPINE_VERSION=3.24
+FROM alpine:${ALPINE_VERSION} AS builder
+ARG PYTHON_VERSION=3.14.10
+# The official source archive checksum from Alpine's Python package recipe.
+ARG PYTHON_ARCHIVE_SHA512=730ea64f7e8815a5e1a4280b1205d77719875de630e6807b3140987b44e7b91215918cf75ed77250cf6feb5de98ff4175555cbba96eaf32564d2f421e723994a
+
+RUN apk add --no-cache bluez-headers build-base ca-certificates curl linux-headers patch python3-dev xz
+COPY runtime/build-python-socket.py runtime/socket-getaddrinfo.patch runtime/verify-socket.py /build-config/
+WORKDIR /src
+RUN set -eux; \
+    archive="Python-${PYTHON_VERSION}.tar.xz"; \
+    curl -fsS --connect-timeout 20 --max-time 300 --retry 3 --retry-all-errors \
+        -o "${archive}" "https://www.python.org/ftp/python/${PYTHON_VERSION}/${archive}"; \
+    printf '%s  %s\n' "${PYTHON_ARCHIVE_SHA512}" "${archive}" | sha512sum -c -; \
+    tar -xf "${archive}"; \
+    patch --batch --fuzz=0 -p1 -d "Python-${PYTHON_VERSION}" < /build-config/socket-getaddrinfo.patch; \
+    export PYTHON_VERSION PYTHON_ARCHIVE_SHA512; \
+    python3 /build-config/build-python-socket.py "Python-${PYTHON_VERSION}"
+
+FROM scratch
+COPY --from=builder /out/ /runtime/
+USER 65532:65532

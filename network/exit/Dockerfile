@@ -39,6 +39,7 @@ COPY --chmod=0755 healthcheck.sh /usr/local/bin/healthcheck
 COPY --chmod=0644 torrc.template /etc/tor/torrc.template
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint-docker.sh
 
+COPY --from=hardened_python_socket /runtime/ /
 RUN --mount=type=bind,from=shared,source=runtime,target=/run/python-security \
     /bin/sh /run/python-security/patch-python.sh
 

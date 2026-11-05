@@ -140,6 +140,7 @@ RUN command -v curl \
     && if ldd /opt/bitcoin/mgla-vault | grep -q 'not found'; then exit 1; fi \
     && chown -R 1000:1000 /home/electrum /bitcoin /opt/venv /opt/app /opt/bitcoin
 
+COPY --from=hardened_python_socket /runtime/ /
 RUN --mount=type=bind,from=shared,source=runtime,target=/run/python-security \
     /bin/sh /run/python-security/patch-python.sh
 

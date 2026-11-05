@@ -27,7 +27,7 @@ for image in "$@"; do
         options+=(--vex "${vex}")
     fi
     "${grype}" "${target}" "${options[@]}" -o sarif > "grype-verified/${report}.sarif"
-    "${grype}" "${target}" "${options[@]}" --only-fixed --fail-on medium || status=1
+    "${grype}" "${target}" "${options[@]}" --fail-on medium || status=1
 done
 
 exit "${status}"

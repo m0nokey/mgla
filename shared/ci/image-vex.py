@@ -47,6 +47,15 @@ def verified_findings(image_id, image_name):
             ):
                 findings[(cve, "python3", "3.14.10-r1")] = ("fixed", fix)
 
+        test = Path(__file__).resolve().parents[1] / "runtime" / "verify-socket.py"
+        if check_image(image_id, "/usr/bin/python3", "-I", "-", stdin=test.read_text()):
+            findings[("CVE-2026-116566", "python3", "3.14.10-r1")] = (
+                "fixed",
+                "The rebuilt native _socket module rejects NUL bytes in host and port. "
+                "Numeric resolution and socket I/O also pass the runtime tests. "
+                "Backport of CPython 131a3a66c5f400b588f9fd2732a5ed4e89623ee3.",
+            )
+
     return findings
 
 

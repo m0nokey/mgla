@@ -51,6 +51,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Build and test the native Python resolver fix
+        run: docker build --progress=plain -f shared/runtime/Dockerfile.python-socket shared
+
       - name: Install validation tools
         run: |
           set -euxo pipefail
@@ -151,7 +154,7 @@ jobs:
           docker compose --ansi never --profile bitcoin --profile vault -f compose.yaml config --quiet
 
       - name: Compile Python helpers
-        run: python3 -m py_compile shared/ci/security-summary.py bitcoin/network-check.py bitcoin/prune-runtime.py shared/runtime/minimize-busybox.py
+        run: python3 -m py_compile shared/ci/security-summary.py shared/ci/image-vex.py bitcoin/network-check.py bitcoin/prune-runtime.py shared/runtime/minimize-busybox.py shared/runtime/build-python-socket.py shared/runtime/verify-socket.py
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path shared/vault/Cargo.toml -- --check

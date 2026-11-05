@@ -138,6 +138,13 @@ without the OpenSSL command-line program. CI checks these contents and
 creates, saves, and reopens disposable wallets through the encrypted vault
 on both architectures, alongside the Tor isolation tests.
 
+Python runtimes include a native `_socket` backport for CVE-2026-116566,
+built from the checksum-verified matching CPython release. The build records
+source, patch, and module hashes in `/usr/share/mgla/python-socket-build.json`.
+VEX marks this CVE fixed only after isolated tests of the native resolver
+reject NUL bytes in both host and port. Any remaining Medium or higher finding
+blocks publication, including findings without a known fixed version.
+
 The vault is not a runtime helper container and does not create a block device.
 Only encrypted `.mgla` vault files remain on the host; the decrypted shared
 vault exists only in the wallet container tmpfs.

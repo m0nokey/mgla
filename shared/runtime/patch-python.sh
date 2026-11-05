@@ -10,3 +10,4 @@ rm -f "${stdlib}"/__pycache__/poplib.*.pyc "${stdlib}"/http/__pycache__/client.*
 apk del .python-security-patch
 
 python3 /run/python-security/verify-python.py
+python3 -I /run/python-security/verify-socket.py
