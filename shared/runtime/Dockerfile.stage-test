@@ -25,3 +25,4 @@ RUN apk add --no-cache lddtreepax
 COPY --from=fixture / /source/
 COPY runtime/stage-runtime.py runtime/stage-runtime-test.py /tests/
 RUN python3 /tests/stage-runtime-test.py
+USER 65532:65532

@@ -209,15 +209,17 @@ jobs:
           printf '%s\n' "${RUNNER_TEMP}/trivy-bin" >> "${GITHUB_PATH}"
 
       - name: Scan Docker and Compose configuration
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        run: |
+          set -o pipefail
+          trivy config --format table --exit-code 1 --severity MEDIUM,HIGH,CRITICAL . 2>&1 | tee trivy-config.log
+
+      - name: Upload failed configuration scan log
+        if: failure() && hashFiles('trivy-config.log') != ''
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
-          scan-type: config
-          scan-ref: .
-          scanners: misconfig
-          format: table
-          exit-code: "1"
-          severity: MEDIUM,HIGH,CRITICAL
-          skip-setup-trivy: true
+          name: scratch-configuration-scan-log
+          path: trivy-config.log
+          retention-days: 7
 
       - name: Scan repository for secrets
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
