@@ -149,7 +149,7 @@ RUN --mount=type=bind,from=shared,source=runtime,target=/run/runtime-config \
     /bin/sh /run/runtime-config/prune-busybox-links.sh
 
 FROM alpine:${ALPINE_VERSION} AS assemble
-RUN apk add --no-cache pax-utils
+RUN apk add --no-cache lddtreepax
 COPY --from=runtime-files / /source/
 RUN --mount=type=bind,from=shared,source=runtime,target=/run/runtime-config \
     python3 /run/runtime-config/stage-runtime.py bitcoin

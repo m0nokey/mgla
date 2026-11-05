@@ -343,7 +343,7 @@ jobs:
                    echo "Unexpected BusyBox applet: $command" >&2; exit 1
                  fi
                done
-               for command in apk sqlite3 openssl gcc cc make git lddtree scanelf; do
+               for command in apk sqlite3 openssl gcc cc make git lddtree lddtreepax scanelf; do
                  if command -v "$command"; then
                    echo "Unexpected runtime command: $command" >&2; exit 1
                  fi

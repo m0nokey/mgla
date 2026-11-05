@@ -140,7 +140,7 @@ class RuntimeTree:
         while self.elfs:
             path = self.elfs.popleft()
             result = subprocess.run(
-                ["lddtree", "--root", str(self.source), "--list", path],
+                ["lddtreepax", "--root", str(self.source), "--list", path],
                 check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
             if result.returncode:
