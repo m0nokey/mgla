@@ -2,15 +2,7 @@ name: mgla CI
 
 on:
   push:
-    paths:
-      - "bitcoin/**"
-      - "monero/**"
-      - "network/**"
-      - "shared/**"
-      - "compose.yaml"
-      - "run.sh"
-      - ".github/workflows/ci.yml"
-  pull_request:
+    branches: [main]
     paths:
       - "bitcoin/**"
       - "monero/**"
@@ -22,6 +14,12 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+
+# Finish an active publication before building the next main revision.
+# Nightly scans have a separate queue and cannot interrupt publication.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'rescan' || 'build' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -39,7 +37,7 @@ env:
 jobs:
   quality:
     name: static validation
-    if: github.event_name != 'schedule'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -233,6 +231,7 @@ jobs:
 
   osv-scan:
     name: OSV dependency scan
+    if: github.ref == 'refs/heads/main'
     permissions:
       actions: read
       contents: read
@@ -250,6 +249,7 @@ jobs:
 
   codeql:
     name: CodeQL (${{ matrix.language }})
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -283,11 +283,11 @@ jobs:
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           category: /language:${{ matrix.language }}
-          upload: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'always' || 'never' }}
+          upload: always
 
   build-test-scan:
     name: build test scan
-    if: github.event_name != 'schedule'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'schedule'
     needs: [quality, osv-scan, codeql]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
@@ -603,10 +603,7 @@ jobs:
   upload-security-reports:
     name: upload security reports
     needs: build-test-scan
-    if: >-
-      needs.build-test-scan.result == 'success' &&
-      (github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository)
+    if: needs.build-test-scan.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -755,7 +752,7 @@ jobs:
 
   rescan-latest:
     name: rescan latest images
-    if: github.event_name == 'schedule'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'schedule'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     permissions:

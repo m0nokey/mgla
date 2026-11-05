@@ -123,6 +123,10 @@ ghcr.io/m0nokey/mgla-bitcoin:latest
 
 Every image is built for `linux/amd64` and `linux/arm64`. Network images are
 built once per architecture in CI and are reused by both wallet profiles.
+Relevant changes pushed or merged into `main` trigger one build, test, scan,
+and publication pipeline. Manual runs also require `main`. Build runs are
+serialized so an active publication finishes before the next revision starts;
+nightly scans of published images use a separate queue.
 All four runtime images use `FROM scratch`. Monero embeds its C++ dependencies
 in a static executable. Electrum includes Python, its hash-pinned packages,
 and the signed Electrum release. Each wallet image also includes the shared
