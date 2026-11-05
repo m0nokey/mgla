@@ -5,9 +5,9 @@ from collections import deque
 import json
 import os
 from pathlib import Path, PurePosixPath
+import runpy
 import shutil
 import stat
-import subprocess
 
 
 SEARCH_PATH = ("/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin")
@@ -137,16 +137,29 @@ class RuntimeTree:
         raise FileNotFoundError(f"Required runtime command is missing: {name}")
 
     def collect_dependencies(self):
+        scanner = runpy.run_path("/usr/bin/lddtreepax")
+        parse_paths = scanner["ParseLdPaths"]
+
+        def image_paths(value, root="", cwd=None, path=""):
+            # pax-utils 1.3.9 otherwise prefixes --root twice for $ORIGIN.
+            # Give expansion the image path, while file reads keep the host path.
+            prefix = root.rstrip("/")
+            if prefix and path.startswith(prefix + "/"):
+                path = path[len(prefix):]
+            return parse_paths(value, root=root, cwd=cwd, path=path)
+
+        scanner["ParseELF"].__globals__["ParseLdPaths"] = image_paths
+        root = str(self.source) + "/"
+        search = scanner["LoadLdpaths"](root)
+        search["env"] = []  # Never resolve against the assembler's environment.
         while self.elfs:
             path = self.elfs.popleft()
-            result = subprocess.run(
-                ["lddtreepax", "--root", str(self.source), "--list", path],
-                check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            )
-            if result.returncode:
-                raise RuntimeError(f"Dependency scan failed for {path}: {result.stdout}{result.stderr}")
+            result = scanner["ParseELF"](str(self.source_path(path)), root=root, ldpaths=search)
             self.elf_count += 1
-            for line in result.stdout.splitlines():
+            for name, library in result["libs"].items():
+                line = library["path"]
+                if line is None:
+                    raise RuntimeError(f"Unresolved dependency of {path}: {name}")
                 dependency = Path(line)
                 if not dependency.is_absolute() or not dependency.is_relative_to(self.source):
                     raise RuntimeError(f"Unresolved or out-of-tree dependency of {path}: {line}")

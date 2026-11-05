@@ -318,7 +318,9 @@ jobs:
           IMAGE_MODE: build
           IMAGE_TAG: ${{ github.sha }}-${{ matrix.architecture }}
           DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
-        run: bash monero/monero-cli.sh
+        run: |
+          set -o pipefail
+          bash monero/monero-cli.sh 2>&1 | tee monero-integration.log
 
       - name: Build and run Bitcoin integration checks
         env:
@@ -326,7 +328,18 @@ jobs:
           IMAGE_MODE: build
           IMAGE_TAG: ${{ github.sha }}-${{ matrix.architecture }}
           DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
-        run: bash bitcoin/bitcoin-cli.sh
+        run: |
+          set -o pipefail
+          bash bitcoin/bitcoin-cli.sh 2>&1 | tee bitcoin-integration.log
+
+      - name: Upload failed integration logs
+        if: failure()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: scratch-integration-logs-${{ matrix.architecture }}
+          path: '*-integration.log'
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Verify wallet and network runtime contents
         env:
