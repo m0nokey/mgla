@@ -11,6 +11,8 @@ module_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=../shared/lib/network.sh
 source "${module_dir}/../shared/lib/network.sh"
+# shellcheck source=../shared/lib/tor-route.sh
+source "${module_dir}/../shared/lib/tor-route.sh"
 
 project="mgla-monero"
 compose_profile="monero"
@@ -312,6 +314,15 @@ print_diagnostics() {
     echo
     echo "[diagnostics] haproxy logs"
     docker logs "${haproxy_container}" --tail=120 2>/dev/null || true
+    echo "[diagnostics] haproxy process state"
+    docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}' \
+        "${haproxy_container}" 2>/dev/null || true
+    local backend
+    for backend in exit_a exit_b; do
+        echo "[diagnostics] haproxy backend ${backend}"
+        docker exec -e "HAPROXY_SERVER_NAME=${backend}" "${haproxy_container}" \
+            /usr/local/bin/exit_ready_check 2>&1 || true
+    done
     echo
     echo "[diagnostics] monero logs"
     docker logs "${monero_container}" --tail=120 2>/dev/null || true
@@ -344,24 +355,6 @@ other_state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{
 if [[ "${other_state}" != "healthy" ]]; then
     echo "[info] ${other} is not healthy yet (continuing)."
 fi
-echo "[info] waiting for HAProxy to mark backend up"
-haproxy_ready=0
-for ((j=1; j<=30; j++)); do
-    if docker logs "${haproxy_container}" --tail=80 2>/dev/null | grep -Eq "Server socks_pool/exit_(a|b) is UP|socks_pool/exit_(a|b) changed its SSL|Health check for server socks_pool/exit_(a|b) succeeded"; then
-        haproxy_ready=1
-        break
-    fi
-    if (( j % 10 == 0 )); then
-        echo "[info] waiting... ${j}s HAProxy backend=starting"
-    fi
-    sleep 1
-done
-if (( haproxy_ready == 1 )); then
-    echo "[ok] HAProxy backend is ready"
-else
-    echo "[warn] HAProxy backend is not confirmed yet; network test will verify it"
-fi
-
 echo "[info] running Monero network test"
 echo "[test] direct internet must be blocked from internal network"
 direct_json="$(docker exec "${monero_container}" curl -fsS --max-time 8 https://check.torproject.org/api/ip 2>/dev/null || true)"
@@ -372,10 +365,14 @@ if [[ -n "${direct_json}" ]]; then
 fi
 echo "[ok] direct curl blocked"
 echo "[test] Tor through HAProxy SOCKS5h must work"
-tor_json="$(docker exec "${monero_container}" curl -fsS --max-time 15 --proxy "socks5h://${int_network_container_haproxy_ipv4}:9095" https://check.torproject.org/api/ip 2>/dev/null || true)"
-if [[ "${tor_json}" != *IsTor*true* ]]; then
+probe_monero_tor_route() {
+    docker exec "${monero_container}" curl -fsS --connect-timeout 10 --max-time 15 \
+        --proxy "socks5h://${int_network_container_haproxy_ipv4}:9095" \
+        https://check.torproject.org/api/ip
+}
+if ! tor_json="$(wait_for_tor_route 12 2 probe_monero_tor_route)"; then
     echo "[error] Tor SOCKS5h through HAProxy failed" >&2
-    echo "${tor_json}" >&2
+    print_diagnostics >&2
     exit 1
 fi
 echo "${tor_json}"

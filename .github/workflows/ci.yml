@@ -83,6 +83,9 @@ jobs:
       - name: Test shared vault launcher lifecycle
         run: bash shared/vault/launcher-test.sh
 
+      - name: Test Tor route retry behavior
+        run: bash shared/lib/tor-route-test.sh
+
       - name: Validate Monero Compose profile
         run: |
           set -euxo pipefail
