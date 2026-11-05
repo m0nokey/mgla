@@ -16,7 +16,8 @@ RUN apk add --no-cache curl \
     && mkdir -p /usr/local/bin /var/lib/fixture \
     && chown 1000:4242 /var/lib/fixture \
     && chmod 0700 /var/lib/fixture \
-    && ln -s /opt/fixture/probe /usr/local/bin/probe
+    && ln -s /opt/fixture/probe /usr/local/bin/probe \
+    && ln -s /usr/bin/curl /usr/local/bin/curl
 COPY --from=compile-fixture /fixture/ /
 
 FROM alpine:3.24

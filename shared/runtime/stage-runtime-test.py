@@ -15,13 +15,15 @@ assert str(runtime.resolve("/../../usr")) == "/usr"
 assert str(runtime.entry_path("/..")) == "/"
 runtime.add("/bin/sh")
 runtime.add("/usr/local/bin/probe")
-runtime.add("/usr/bin/curl")
+runtime.add("/usr/local/bin/curl")
 runtime.add("/etc/os-release")
 runtime.add("/var/lib/fixture")
 runtime.finish("fixture")
 
-assert subprocess.check_output(["chroot", "/runtime", "/usr/local/bin/probe"], text=True).strip() == "42"
-subprocess.run(["chroot", "/runtime", "/usr/bin/curl", "--version"], check=True)
+# This chroot has no /proc/self/exe; musl then uses argv[0] for $ORIGIN.
+# Check RPATH via the real path and absolute-alias execution independently.
+assert subprocess.check_output(["chroot", "/runtime", "/opt/fixture/probe"], text=True).strip() == "42"
+subprocess.run(["chroot", "/runtime", "/usr/local/bin/curl", "--version"], check=True)
 assert (Path("/runtime/usr/local/bin/probe").is_symlink())
 attributes = Path("/runtime/var/lib/fixture").stat()
 assert (attributes.st_uid, attributes.st_gid, stat.S_IMODE(attributes.st_mode)) == (1000, 4242, 0o700)
