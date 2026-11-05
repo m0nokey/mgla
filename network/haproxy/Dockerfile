@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
-FROM alpine:3.24
+ARG ALPINE_VERSION=3.24
+FROM alpine:${ALPINE_VERSION} AS runtime-files
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
@@ -45,5 +46,17 @@ COPY --from=hardened_busybox /busybox /bin/busybox
 RUN --mount=type=bind,from=shared,source=runtime,target=/run/runtime-config \
     /bin/sh /run/runtime-config/prune-busybox-links.sh
 
+FROM alpine:${ALPINE_VERSION} AS assemble
+RUN apk add --no-cache pax-utils
+COPY --from=runtime-files / /source/
+RUN --mount=type=bind,from=shared,source=runtime,target=/run/runtime-config \
+    python3 /run/runtime-config/stage-runtime.py haproxy
+
+FROM scratch
+COPY --from=assemble /runtime/ /
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC
 USER haproxy:haproxy
 ENTRYPOINT ["/usr/local/bin/entrypoint-docker.sh"]

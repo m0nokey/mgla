@@ -54,6 +54,19 @@ jobs:
       - name: Build and test the native Python resolver fix
         run: docker build --progress=plain -f shared/runtime/Dockerfile.python-socket shared
 
+      - name: Test scratch runtime assembly
+        run: |
+          set -o pipefail
+          docker build --progress=plain -f shared/runtime/Dockerfile.stage-test shared 2>&1 | tee runtime-assembly-test.log
+
+      - name: Upload failed runtime assembly log
+        if: ${{ failure() && hashFiles('runtime-assembly-test.log') != '' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.1
+        with:
+          name: runtime-assembly-test-log
+          path: runtime-assembly-test.log
+          retention-days: 7
+
       - name: Install validation tools
         run: |
           set -euxo pipefail
@@ -154,7 +167,7 @@ jobs:
           docker compose --ansi never --profile bitcoin --profile vault -f compose.yaml config --quiet
 
       - name: Compile Python helpers
-        run: python3 -m py_compile shared/ci/security-summary.py shared/ci/image-vex.py bitcoin/network-check.py bitcoin/prune-runtime.py shared/runtime/minimize-busybox.py shared/runtime/build-python-socket.py shared/runtime/verify-socket.py
+        run: python3 -m py_compile shared/ci/security-summary.py shared/ci/image-vex.py bitcoin/network-check.py bitcoin/prune-runtime.py network/exit/ci-monitor-test.py shared/runtime/minimize-busybox.py shared/runtime/build-python-socket.py shared/runtime/verify-socket.py shared/runtime/stage-runtime.py shared/runtime/stage-runtime-test.py
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path shared/vault/Cargo.toml -- --check
@@ -330,20 +343,27 @@ jobs:
                    echo "Unexpected BusyBox applet: $command" >&2; exit 1
                  fi
                done
-               for command in sqlite3 openssl; do
+               for command in apk sqlite3 openssl gcc cc make git lddtree scanelf; do
                  if command -v "$command"; then
                    echo "Unexpected runtime command: $command" >&2; exit 1
                  fi
                done
                test -f /usr/share/zoneinfo/UTC
                test "$(find /usr/share/zoneinfo -type f | wc -l)" -eq 1
-               test "$(cat /etc/timezone)" = UTC'
+               test "$(cat /etc/timezone)" = UTC
+               test "$(id -u)" -ne 0
+               test ! -d /etc/apk
+               test -s /usr/share/mgla/runtime-packages.json
+               test -s /lib/apk/db/installed'
           done
           for wallet in monero bitcoin; do
             docker run --rm --network none --entrypoint /bin/sh \
               "${IMAGE_REGISTRY}/mgla-${wallet}:${IMAGE_TAG}" -ec \
-              'test "$(id -u)" = 1000 && ! command -v apk'
+              'test "$(id -u)" = 1000'
           done
+          docker run --rm --network none --entrypoint /bin/sh \
+            "${IMAGE_REGISTRY}/mgla-monero:${IMAGE_TAG}" -ec \
+            'if command -v python3; then echo "Build-only Python leaked into Monero" >&2; exit 1; fi'
           docker run --rm --network none --entrypoint /opt/venv/bin/python \
             "${IMAGE_REGISTRY}/mgla-bitcoin:${IMAGE_TAG}" -c '
           import json

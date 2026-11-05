@@ -123,12 +123,18 @@ ghcr.io/m0nokey/mgla-bitcoin:latest
 
 Every image is built for `linux/amd64` and `linux/arm64`. Network images are
 built once per architecture in CI and are reused by both wallet profiles.
-Both wallet images use `FROM scratch`. Monero embeds its C++ dependencies
+All four runtime images use `FROM scratch`. Monero embeds its C++ dependencies
 in a static executable. Electrum includes Python, its hash-pinned packages,
 and the signed Electrum release. Each wallet image also includes the shared
 vault binary, launcher tools, and the libraries and data they need at runtime.
-Compilers, package managers, signing tools, and build caches stay in the
-build stages.
+An explicit file selection and recursive ELF dependency scan assemble each
+filesystem. Compilers, package managers, signing tools, dependency scanners,
+and build caches stay in the build stages. The source package inventory for
+shipped files is retained for vulnerability scanners, alongside the selected
+paths in `/usr/share/mgla/runtime-packages.json`.
+
+Tor retains Nyx, its Python runtime, and terminal data. CI checks Nyx's control
+socket authentication, circuit queries, and terminal support on both architectures.
 
 Wallet runtimes support software wallets only: Monero is compiled without
 Trezor, Ledger, HIDAPI, USB, or udev dependencies, and Electrum's hardware

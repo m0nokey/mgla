@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1.7
+FROM alpine:3.24 AS compile-fixture
+RUN apk add --no-cache build-base
+RUN <<'BUILD'
+set -eu
+mkdir -p /fixture/opt/fixture/lib
+printf '%s\n' 'int answer(void) { return 42; }' > /tmp/library.c
+printf '%s\n' '#include <stdio.h>' 'int answer(void);' 'int main(void) { printf("%d\n", answer()); return 0; }' > /tmp/probe.c
+cc -shared -fPIC -Wl,-soname,libfixture.so.1 /tmp/library.c -o /fixture/opt/fixture/lib/libfixture.so.1
+ln -s libfixture.so.1 /fixture/opt/fixture/lib/libfixture.so
+cc /tmp/probe.c -L/fixture/opt/fixture/lib -lfixture '-Wl,-rpath,$ORIGIN/lib' -o /fixture/opt/fixture/probe
+BUILD
+
+FROM alpine:3.24 AS fixture
+RUN apk add --no-cache curl \
+    && mkdir -p /usr/local/bin /var/lib/fixture \
+    && chown 1000:4242 /var/lib/fixture \
+    && chmod 0700 /var/lib/fixture \
+    && ln -s /opt/fixture/probe /usr/local/bin/probe
+COPY --from=compile-fixture /fixture/ /
+
+FROM alpine:3.24
+RUN apk add --no-cache pax-utils
+COPY --from=fixture / /source/
+COPY runtime/stage-runtime.py runtime/stage-runtime-test.py /tests/
+RUN python3 /tests/stage-runtime-test.py
