@@ -5,3 +5,4 @@
 !network-check.py
 !wallet-launcher.sh
 !wallet-view.py
+!prune-runtime.py

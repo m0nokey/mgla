@@ -395,6 +395,9 @@ echo "${monero_version}" | head -n 1
 
 echo "[ok] Tor + HAProxy + Monero test passed"
 if [[ "${CI:-0}" == "1" || "${SKIP_WALLET_MENU:-0}" == "1" ]]; then
+    if [[ "${CI:-0}" == "1" ]]; then
+        docker exec -i "${monero_container}" /bin/bash -s < "${module_dir}/ci-wallet-state-test.sh"
+    fi
     echo "[info] CI mode enabled; wallet menu skipped"
     exit 0
 fi
