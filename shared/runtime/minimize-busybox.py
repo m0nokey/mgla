@@ -20,6 +20,8 @@ assert {"ASH", "WGET", "TEST1", "INSMOD", "MODPROBE", "DEPMOD"}.issubset(applet_
     "Missing BusyBox applet declarations"
 )
 disabled = {option for option, applets in applet_options.items() if not applets & allowed}
+# The dispatcher implements --list even when it is absent from the applet table.
+disabled.discard("BUSYBOX")
 disabled.update({"FEATURE_UTMP", "FEATURE_WTMP", "MODPROBE_SMALL"})
 config = source / ".config"
 lines = config.read_text().splitlines()
