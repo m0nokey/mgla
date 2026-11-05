@@ -20,9 +20,12 @@ runtime.add("/etc/os-release")
 runtime.add("/var/lib/fixture")
 runtime.finish("fixture")
 
-# This chroot has no /proc/self/exe; musl then uses argv[0] for $ORIGIN.
-# Check RPATH via the real path and absolute-alias execution independently.
-assert subprocess.check_output(["chroot", "/runtime", "/opt/fixture/probe"], text=True).strip() == "42"
+# This chroot has no /proc/self/exe, which musl requires for a kernel-mapped
+# executable's $ORIGIN. Invoke the copied loader explicitly for this fixture.
+loaders = list(Path("/runtime/lib").glob("ld-musl-*.so.1"))
+assert len(loaders) == 1, loaders
+loader = "/" + loaders[0].relative_to("/runtime").as_posix()
+assert subprocess.check_output(["chroot", "/runtime", loader, "/opt/fixture/probe"], text=True).strip() == "42"
 subprocess.run(["chroot", "/runtime", "/usr/local/bin/curl", "--version"], check=True)
 assert (Path("/runtime/usr/local/bin/probe").is_symlink())
 attributes = Path("/runtime/var/lib/fixture").stat()
