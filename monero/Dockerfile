@@ -105,6 +105,7 @@ RUN apk add --no-cache \
         libssl3 \
         libcrypto3 \
         tzdata \
+        "zlib>=1.4-r0" \
     && cp /usr/share/zoneinfo/UTC /etc/localtime \
     && printf '%s\n' UTC > /etc/timezone \
     && cp /usr/share/zoneinfo/UTC /tmp/mgla-UTC \
