@@ -56,6 +56,14 @@ def verified_findings(image_id, image_name):
                 "Backport of CPython 131a3a66c5f400b588f9fd2732a5ed4e89623ee3.",
             )
 
+        test = Path(__file__).resolve().parents[1] / "runtime" / "verify-hashlib-fips.py"
+        if check_image(image_id, "/usr/bin/python3", "-I", "-", stdin=test.read_text()):
+            findings[("CVE-2026-119170", "python3", "3.14.10-r1")] = (
+                "fixed",
+                "Native hashlib enforces OpenSSL's FIPS property for security-sensitive MD5. "
+                "Backport of CPython 7d9da9208fc3dc126bebca6844dfe312afc43c34.",
+            )
+
     return findings
 
 

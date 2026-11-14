@@ -11,3 +11,4 @@ apk del .python-security-patch
 
 python3 /run/python-security/verify-python.py
 python3 -I /run/python-security/verify-socket.py
+python3 -I /run/python-security/verify-hashlib-fips.py

@@ -49,8 +49,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build and test the native Python resolver fix
-        run: docker build --progress=plain -f shared/runtime/Dockerfile.python-socket shared
+      - name: Build and test native Python fixes
+        run: |
+          set -o pipefail
+          docker build --progress=plain -f shared/runtime/Dockerfile.python-socket shared 2>&1 | tee python-backports-test.log
+
+      - name: Upload failed Python backports log
+        if: ${{ failure() && hashFiles('python-backports-test.log') != '' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.1
+        with:
+          name: python-backports-test-log
+          path: python-backports-test.log
+          retention-days: 7
 
       - name: Test scratch runtime assembly
         run: |
