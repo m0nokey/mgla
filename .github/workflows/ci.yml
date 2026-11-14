@@ -195,19 +195,24 @@ jobs:
 
       - name: Install latest stable Trivy from GitHub Releases
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tmp_dir="$(mktemp -d)"
           trap 'rm -rf "${tmp_dir}"' EXIT
           cd "${tmp_dir}"
 
+          echo "Resolving the latest stable Trivy release"
           curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
             --connect-timeout 10 --max-time 120 \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
             https://api.github.com/repos/aquasecurity/trivy/releases/latest -o release.json
           version="$(jq -er '.tag_name | select(test("^v[0-9]+[.][0-9]+[.][0-9]+$"))' release.json)"
           asset="trivy_${version#v}_Linux-64bit.tar.gz"
           digest="$(jq -er --arg asset "${asset}" \
             '.assets[] | select(.name == $asset) | .digest | select(test("^sha256:[a-f0-9]{64}$"))' release.json)"
+          echo "Downloading Trivy ${version}"
           curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
             --connect-timeout 10 --max-time 120 \
             "https://github.com/aquasecurity/trivy/releases/download/${version}/${asset}" -o "${asset}"
